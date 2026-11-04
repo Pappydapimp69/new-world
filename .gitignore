@@ -1,0 +1,3 @@
+# Per-machine Brain local store and link hook (never shared)
+.brain/
+.claude/settings.json
