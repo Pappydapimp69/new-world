@@ -8,8 +8,13 @@
 //      that the level ends won, which is the same code path the real game runs.
 //   3. With --browser, loads the page in Chromium, checks for script errors, replays the
 //      solution in the page's own runtime, presses real keys, and saves a screenshot.
-// Usage: node tools/playtest.js [levelNumber|all] [--browser] [--shot out.png]
+// Speed: independent searches (unreachable steps, the star checks) run on worker threads
+// alongside the main solve, and a level whose map, plan, sim code and this tool are all
+// unchanged reuses its last passing result from tools/playtest-cache.json (--fresh skips it).
+// Usage: node tools/playtest.js [levelNumber|all] [--browser] [--shot out.png] [--fresh]
 const fs = require("fs");
+const crypto = require("crypto");
+const { Worker, isMainThread, parentPort } = require("worker_threads");
 const path = require("path");
 const vm = require("vm");
 
@@ -50,6 +55,7 @@ function reached(W, s, mover, to) {
   if (to === "won") return s.won;
   if (typeof to === "function") return to(W, s, mover);
   if (to === "i") return s.melted.length > 0;              // some ice melted
+  if (to.startsWith("*#")) return s.gems[+to.slice(2)];    // star by index
   if (to.startsWith("*@")) {                                 // one specific star, "*@col,row"
     const [tx, ty] = to.slice(2).split(",").map(Number);
     const k = W.gems.findIndex(g => g.tx === tx && g.ty === ty);
@@ -118,48 +124,84 @@ function search(W, start, mover, to) {
   return { inputs: null, nodes: nodes.length };
 }
 
-function playtest(level) {
+// worker side: run one search and report whether it found a way
+if (!isMainThread) parentPort.on("message", ({ id, levelIdx, state, mover, to }) => {
+  const t0 = Date.now();
+  const r = search(buildWorld(LEVELS[levelIdx]), state, mover, to);
+  parentPort.postMessage({ id, found: !!r.inputs, nodes: r.nodes, capped: !!r.capped, ms: Date.now() - t0, inputs: r.inputs, end: r.end });
+});
+
+class Pool {
+  constructor(n) {
+    this.idle = []; this.queue = []; this.jobs = new Map(); this.n = 0;
+    this.workers = Array.from({ length: n }, () => {
+      const w = new Worker(__filename);
+      w.on("message", m => { const j = this.jobs.get(m.id); this.jobs.delete(m.id); this.idle.push(w); j.resolve(m); this.pump(); });
+      this.idle.push(w); return w;
+    });
+  }
+  run(job) { return new Promise(resolve => { this.queue.push({ id: ++this.n, job, resolve }); this.pump(); }); }
+  pump() { while (this.idle.length && this.queue.length) { const w = this.idle.pop(), q = this.queue.shift(); this.jobs.set(q.id, q); w.postMessage({ id: q.id, ...q.job }); } }
+  close() { this.workers.forEach(w => w.terminate()); }
+}
+
+async function playtest(level, pool) {
+  const levelIdx = LEVELS.indexOf(level);
   const W = buildWorld(level);
   const plan = level.testPlan || [];
+  const report = new Array(plan.length).fill(null);
+  const pending = [];
+  let ok = true;
+  if (!plan.length) return { ok: false, report: ["  ✗ no testPlan"], inputs: [] };
+  // every star must be reachable by someone once the gates are open: queue these first, they need no plan
+  const starStart = newState(W); starStart.latched = true; starStart.gateOpen = true;
+  const stars = W.gems.map((gm, k) => Promise.all([0, 1].map(m => pool.run({ levelIdx, state: cloneState(starStart), mover: m, to: "*#" + k })))
+    .then(rs => ({ gm, got: rs.some(r => r.found) })));
   let cur = newState(W);
   const all = [];
-  const report = [];
-  let ok = true;
-  if (!plan.length) { report.push("  ✗ no testPlan"); ok = false; }
-  for (const step of plan) {
-    const t0 = Date.now();
-    const res = search(W, cloneState(cur), step.mover, step.to);
-    const ms = Date.now() - t0;
+  for (let n = 0; n < plan.length; n++) {
+    const step = plan[n];
     const label = `P${step.mover + 1} → ${step.to}${step.note ? "  (" + step.note + ")" : ""}`;
     if (step.expect === "unreachable") {
-      const pass = !res.inputs && !res.capped;
-      ok = ok && pass;
-      report.push(`  ${pass ? "✓" : "✗"} unreachable: ${label}  [${res.nodes} states, ${ms} ms${res.capped ? ", search capped, inconclusive" : ""}]`);
+      pending.push(pool.run({ levelIdx, state: cloneState(cur), mover: step.mover, to: step.to }).then(r => {
+        const pass = !r.found && !r.capped;
+        ok = ok && pass;
+        report[n] = `  ${pass ? "✓" : "✗"} unreachable: ${label}  [${r.nodes} states, ${r.ms} ms${r.capped ? ", search capped, inconclusive" : ""}]`;
+      }));
       continue;
     }
-    if (!res.inputs) { ok = false; report.push(`  ✗ ${label}  no path found [${res.nodes} states${res.capped ? ", capped" : ""}]`); break; }
-    report.push(`  ✓ ${label}  ${(res.inputs.length / 60).toFixed(1)} s of input [${res.nodes} states, ${ms} ms]`);
+    // even the main solve runs on a worker, so this thread stays free to hand out jobs
+    const res = await pool.run({ levelIdx, state: cloneState(cur), mover: step.mover, to: step.to });
+    const ms = res.ms;
+    if (!res.inputs) { ok = false; report[n] = `  ✗ ${label}  no path found [${res.nodes} states${res.capped ? ", capped" : ""}]`; break; }
+    report[n] = `  ✓ ${label}  ${(res.inputs.length / 60).toFixed(1)} s of input [${res.nodes} states, ${ms} ms]`;
     all.push(...res.inputs);
     cur = res.end;
   }
+  await Promise.all(pending);
+  const lines = report.filter(Boolean);
   // full replay from a fresh start through the same stepWorld the game runs
   if (ok) {
     const s = newState(W);
     for (const inp of all) { stepWorld(W, s, inp); s.events.length = 0; }
-    if (!s.won) { ok = false; report.push("  ✗ replay from a fresh start did not end in a win"); }
-    else report.push(`  ✓ full replay wins in ${(all.length / 60).toFixed(1)} s, falls ${s.falls}, stars ${s.gems.filter(Boolean).length}/${s.gems.length}`);
-    // every star must be reachable by someone once the gates are open
-    let starsOk = true;
-    W.gems.forEach((gm, k) => {
-      const st = newState(W); st.latched = true; st.gateOpen = true;
-      const got = [0, 1].some(m => !!search(W, cloneState(st), m, (W2, s) => s.gems[k]).inputs);
-      if (!got) { starsOk = false; report.push(`  ✗ star at column ${gm.tx}, row ${gm.ty} is unreachable`); }
-    });
-    ok = ok && starsOk;
-    if (W.gems.length && starsOk) report.push(`  ✓ all ${W.gems.length} stars reachable`);
+    if (!s.won) { ok = false; lines.push("  ✗ replay from a fresh start did not end in a win"); }
+    else lines.push(`  ✓ full replay wins in ${(all.length / 60).toFixed(1)} s, falls ${s.falls}, stars ${s.gems.filter(Boolean).length}/${s.gems.length}`);
   }
-  return { ok, report, inputs: all };
+  const starRes = await Promise.all(stars);
+  const missing = starRes.filter(r => !r.got);
+  missing.forEach(r => lines.push(`  ✗ star at column ${r.gm.tx}, row ${r.gm.ty} is unreachable`));
+  if (W.gems.length && !missing.length) lines.push(`  ✓ all ${W.gems.length} stars reachable`);
+  ok = ok && !missing.length;
+  return { ok, report: lines, inputs: all };
 }
+
+// cache: a level is re-searched only when its data, the sim, or this tool changed
+const CACHE = path.join(__dirname, "playtest-cache.json");
+const toolSrc = fs.readFileSync(__filename, "utf8");
+const levelKey = L => crypto.createHash("sha1").update(simSrc[0]).update(JSON.stringify(L)).update(toolSrc).digest("hex").slice(0, 16);
+const enc = inputs => inputs.map(f => [0, 1].map(i => { const x = f[i] || {}; return String((x.left ? 1 : 0) | (x.right ? 2 : 0) | (x.jump ? 4 : 0)); }).join("")).join("");
+const dec = str => Array.from({ length: str.length / 2 }, (_, k) => [0, 1].map(i => { const v = +str[k * 2 + i]; return { left: !!(v & 1), right: !!(v & 2), jump: !!(v & 4) }; }));
+function readCache() { try { return JSON.parse(fs.readFileSync(CACHE, "utf8")); } catch (e) { return {}; } }
 
 async function browserCheck(levelIdx, inputs, shot) {
   const { chromium } = require("playwright");
@@ -311,17 +353,24 @@ async function browserCheck(levelIdx, inputs, shot) {
 }
 
 module.exports = { LEVELS, api, search, playtest };
-if (require.main === module) (async () => {
+if (isMainThread && require.main === module) (async () => {
   const args = process.argv.slice(2);
   const which = args.find(a => /^(\d+|all)$/.test(a)) || String(LEVELS[LEVELS.length - 1].n);
   const shotI = args.indexOf("--shot");
   const shot = shotI >= 0 ? args[shotI + 1] : null;
   const targets = which === "all" ? LEVELS : LEVELS.filter(L => String(L.n) === which);
   let allOk = true;
+  const fresh = args.includes("--fresh");
+  const cache = readCache();
+  const pool = new Pool(require("os").cpus().length);
   for (const L of targets) {
     console.log(`Level ${L.n} · ${L.name}`);
-    const r = playtest(L);
+    const k = levelKey(L), hit = !fresh && cache[L.n] && cache[L.n].key === k && cache[L.n].ok;
+    const t0 = Date.now();
+    const r = hit ? { ok: true, report: cache[L.n].report, inputs: dec(cache[L.n].inputs) } : await playtest(L, pool);
     r.report.forEach(l => console.log(l));
+    console.log(hit ? "  · cached: map, plan, sim and playtest unchanged since the last pass (--fresh to re-search)" : `  · searched in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    if (r.ok && !hit) { cache[L.n] = { key: k, ok: true, report: r.report, inputs: enc(r.inputs) }; fs.writeFileSync(CACHE, JSON.stringify(cache, null, 1)); }
     allOk = allOk && r.ok;
     if (r.ok && args.includes("--browser")) {
       const b = await browserCheck(LEVELS.indexOf(L), r.inputs, shot);
@@ -329,6 +378,7 @@ if (require.main === module) (async () => {
       allOk = allOk && b.ok;
     }
   }
+  pool.close();
   console.log(allOk ? "PASS" : "FAIL");
   process.exit(allOk ? 0 : 1);
 })();

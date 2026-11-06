@@ -250,7 +250,10 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
 // ─────────────────────────────────────────────────────────────────────
 // LEVELS. Claude appends one entry per round. Map legend:
 //   # wall   ^ spikes   g gate   p pressure plate   l lever (latches gates open)
-//   * star   E gold door   1 / 2 player starts   . air
+//   * star   E gold door   1 / 2 player starts   . air   c checkpoint flag
+//   f fire   i ice   w water   $ star under water   P plate under water   F star in fire
+//   b / B beat blocks (solid on alternating pairs of beats; needs rules.bpm)
+// rules: { types: [type for P1, type for P2] (see TYPES), bpm }, plus any PHYS override.
 // testPlan is what tools/playtest.js checks before a level ships.
 // ─────────────────────────────────────────────────────────────────────
 const LEVELS = [
@@ -393,14 +396,26 @@ const TILE = 32, PW = 20, PH = 26;
 const PHYS = { grav: 0.55, maxFall: 12, accel: 0.6, airAccel: 0.45, friction: 0.72, maxRun: 3.6, jumpVel: 11, jumpCut: 3.5, coyote: 5 };
 // Swimming (Tide type only). Leaving the water with jump held is a leap, so a swimmer can climb out.
 const SWIM = { grav: 0.12, maxFall: 2.2, maxRun: 2.6, stroke: 0.45, maxRise: 3.2, leap: 0.8 };
-// Types (level.rules.types[i]). A type is what a player can do that the other can't.
-//   ember: walks through fire, melts ice by pushing into it, sinks in water
-//   tide:  swims in water, is hurt by fire
-// No type: water and fire both send you back to the start.
+// Types (level.rules.types[i]): what a player can do that the other can't. Each type is a set
+// of abilities, so a new type is a new row here, not new code:
+//   fireproof  walks through fire        melts     pushing into ice melts it
+//   swims      swims in water (else water sends you back)
+//   airJumps   extra jumps in mid-air (0 = none)
+// No type: fire and water both send you back, no extra jumps.
+const TYPES = {
+  ember: { name: "Ember type", fireproof: true, melts: true, swims: false, airJumps: 0,
+           text: "Walks through fire. Push into ice to melt it. Sinks in water." },
+  tide: { name: "Tide type", fireproof: false, melts: false, swims: true, airJumps: 0,
+          text: "Swims: hold jump to rise, and keep holding to leap out. Fire hurts." },
+  gust: { name: "Gust type", fireproof: false, melts: false, swims: false, airJumps: 1,
+          text: "Jumps again in mid-air. Fire and water both hurt." }
+};
+const NO_TYPE = { name: "", fireproof: false, melts: false, swims: false, airJumps: 0, text: "" };
+function abilities(W, i) { return TYPES[W.types[i]] || NO_TYPE; }
 
 function buildWorld(level) {
   const map = level.map, h = map.length, w = map[0].length;
-  const W = { w, h, map, rules: Object.assign({}, PHYS, level.rules || {}), spawns: [], gems: [], plates: [], levers: [], exits: [], gates: [], spikes: [], fires: [], ice: [], water: [] };
+  const W = { w, h, map, rules: Object.assign({}, PHYS, level.rules || {}), spawns: [], gems: [], plates: [], levers: [], exits: [], gates: [], spikes: [], fires: [], ice: [], water: [], checkpoints: [] };
   W.types = (level.rules && level.rules.types) || [];
   W.beats = [];
   // beat blocks follow the level's song: 'b' is solid for two beats, then 'B' for two
@@ -421,23 +436,24 @@ function buildWorld(level) {
     else if (c === "P") { W.plates.push({ tx, ty }); W.water.push({ tx, ty }); } // a plate under water
     else if (c === "F") { W.fires.push({ tx, ty }); W.gems.push({ tx, ty }); } // a star in the fire
     else if (c === "b" || c === "B") W.beats.push({ tx, ty, grp: c === "b" ? 0 : 1 });
+    else if (c === "c") W.checkpoints.push({ tx, ty });
   }
   return W;
 }
 
 function newState(W) {
   return {
-    t: 0, won: false, latched: false, plateDown: false, gateOpen: false, falls: 0, melted: [], beatGhost: [],
+    t: 0, won: false, latched: false, plateDown: false, gateOpen: false, falls: 0, melted: [], beatGhost: [], check: W.spawns.map(() => -1), checkAt: W.spawns.map(() => null),
     gems: W.gems.map(() => false), events: [],
-    players: W.spawns.map(s => ({ x: s.x, y: s.y, vx: 0, vy: 0, ground: false, coyote: 0, jumpLock: false, face: 1, swim: false }))
+    players: W.spawns.map(s => ({ x: s.x, y: s.y, vx: 0, vy: 0, ground: false, coyote: 0, jumpLock: false, face: 1, swim: false, airJumps: 0, on: -1, dx: 0, dy: 0 }))
   };
 }
 
 function cloneState(s) {
   return {
-    t: s.t, won: s.won, latched: s.latched, plateDown: s.plateDown, gateOpen: s.gateOpen, falls: s.falls, melted: s.melted.slice(), beatGhost: s.beatGhost.slice(),
+    t: s.t, won: s.won, latched: s.latched, plateDown: s.plateDown, gateOpen: s.gateOpen, falls: s.falls, melted: s.melted.slice(), beatGhost: s.beatGhost.slice(), check: s.check.slice(), checkAt: s.checkAt.map(c => c && { x: c.x, y: c.y }),
     gems: s.gems.slice(), events: [],
-    players: s.players.map(p => ({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, ground: p.ground, coyote: p.coyote, jumpLock: p.jumpLock, face: p.face, swim: p.swim }))
+    players: s.players.map(p => ({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, ground: p.ground, coyote: p.coyote, jumpLock: p.jumpLock, face: p.face, swim: p.swim, airJumps: p.airJumps, on: p.on, dx: p.dx, dy: p.dy }))
   };
 }
 
@@ -452,9 +468,10 @@ function area(kind, t) {
   if (kind === "^") return [x + 4, y + 16, TILE - 8, TILE - 16];
   if (kind === "f") return [x + 4, y + 8, TILE - 8, TILE - 8];
   if (kind === "*") return [x + 8, y + 8, TILE - 16, TILE - 16];
+  if (kind === "c") return [x + 8, y, TILE - 16, TILE];
   return [x, y, TILE, TILE];
 }
-const KIND_LIST = { p: "plates", l: "levers", E: "exits", "^": "spikes", "*": "gems", g: "gates", f: "fires" };
+const KIND_LIST = { p: "plates", l: "levers", E: "exits", "^": "spikes", "*": "gems", g: "gates", f: "fires", c: "checkpoints" };
 function touches(W, p, kind) {
   for (const t of W[KIND_LIST[kind]]) { const a = area(kind, t); if (overlap(p.x, p.y, PW, PH, a[0], a[1], a[2], a[3])) return true; }
   return false;
@@ -484,7 +501,7 @@ function inWater(W, p) { return tileAt(W, Math.floor((p.x + PW / 2) / TILE), Mat
 // An ember player pushing into ice melts it instead of stopping.
 function blocked(W, s, i, tx, ty) {
   if (!solidAt(W, s, tx, ty)) return false;
-  if (W.types[i] === "ember" && tileAt(W, tx, ty) === "i") {
+  if (abilities(W, i).melts && tileAt(W, tx, ty) === "i") {
     s.melted.push(tx + "," + ty);
     s.events.push({ type: "melt", i, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 });
     return false;
@@ -508,6 +525,7 @@ function moveY(W, s, p, i) {
   const prevBottom = p.y + PH;
   p.y += p.vy;
   p.ground = false;
+  p.on = -1;
   const left = Math.floor(p.x / TILE), right = Math.floor((p.x + PW - 0.01) / TILE);
   if (p.vy > 0) {
     const ty = Math.floor((p.y + PH - 0.01) / TILE);
@@ -520,7 +538,7 @@ function moveY(W, s, p, i) {
       s.players.forEach((q, j) => {
         if (j === i || p.ground) return;
         if (p.x < q.x + PW - 2 && p.x + PW > q.x + 2 && prevBottom <= q.y + 0.01 && p.y + PH >= q.y) {
-          p.y = q.y - PH; p.vy = 0; p.ground = true;
+          p.y = q.y - PH; p.vy = 0; p.ground = true; p.on = j;
         }
       });
     }
@@ -530,9 +548,14 @@ function moveY(W, s, p, i) {
   }
 }
 
+// where a player reappears: their own last checkpoint, or the start. What they achieved
+// (stars, melted ice, levers) stays either way (Brain the-game-the-answering-deep#E2).
+// The point is where the player actually stood, safely, when they touched the flag: the
+// flag's own centre can hang over a pit.
+function respawnPoint(W, s, i) { return s.checkAt[i] || W.spawns[i]; }
 function respawn(W, s, i) {
-  const p = s.players[i], sp = W.spawns[i];
-  p.x = sp.x; p.y = sp.y; p.vx = 0; p.vy = 0; p.ground = false; p.coyote = 0; p.swim = false;
+  const p = s.players[i], sp = respawnPoint(W, s, i);
+  p.x = sp.x; p.y = sp.y; p.vx = 0; p.vy = 0; p.ground = false; p.coyote = 0; p.swim = false; p.on = -1; p.dx = 0; p.dy = 0;
 }
 
 function regroup(W, s) { s.players.forEach((_, i) => respawn(W, s, i)); s.events.push({ type: "regroup" }); }
@@ -557,9 +580,30 @@ function stepWorld(W, s, inputs) {
   const r = W.rules;
   s.t++;
   updateTriggers(W, s);
-  s.players.forEach((p, i) => {
-    const inp = inputs[i] || {};
-    const type = W.types[i];
+  // a carrier moves before whoever rides on its head, so the rider can follow it this step
+  const order = s.players.map((_, i) => i);
+  if (s.players.length === 2 && s.players[0].on === 1) order.reverse();
+  for (const i of order) stepPlayer(W, s, i, inputs[i] || {});
+  updateTriggers(W, s);
+  if (s.players.length && s.players.every(p => touches(W, p, "E"))) { s.won = true; s.events.push({ type: "win" }); }
+  return s;
+}
+
+function stepPlayer(W, s, i, inp) {
+  const r = W.rules, p = s.players[i];
+  const x0 = p.x, y0 = p.y;
+  {
+    // riding: standing on your partner's head carries you along with them
+    if (p.on >= 0) {
+      const q = s.players[p.on], vx = p.vx;
+      p.vx = q.dx; moveX(W, s, p, i); p.vx = vx;
+      if (q.dy < 0) {
+        p.y += q.dy;
+        const ty = Math.floor(p.y / TILE), l = Math.floor(p.x / TILE), rr = Math.floor((p.x + PW - 0.01) / TILE);
+        for (let tx = l; tx <= rr; tx++) if (solidAt(W, s, tx, ty)) { p.y = (ty + 1) * TILE; break; }
+      }
+    }
+    const ab = abilities(W, i);
     const swim = p.swim;
     const maxRun = swim ? SWIM.maxRun : r.maxRun;
     const ax = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
@@ -575,6 +619,9 @@ function stepWorld(W, s, inputs) {
       if (inp.jump && !p.jumpLock && (p.ground || p.coyote > 0)) {
         p.vy = -r.jumpVel; p.ground = false; p.coyote = 0; p.jumpLock = true;
         s.events.push({ type: "jump", i, x: p.x + PW / 2, y: p.y + PH });
+      } else if (inp.jump && !p.jumpLock && p.airJumps > 0) {
+        p.vy = -r.jumpVel * 0.9; p.airJumps--; p.jumpLock = true;
+        s.events.push({ type: "jump", air: true, i, x: p.x + PW / 2, y: p.y + PH });
       }
       if (!inp.jump) { p.jumpLock = false; if (p.vy < -r.jumpCut) p.vy = -r.jumpCut; }
       p.vy = Math.min(p.vy + r.grav, r.maxFall);
@@ -582,13 +629,14 @@ function stepWorld(W, s, inputs) {
     moveX(W, s, p, i);
     moveY(W, s, p, i);
     p.coyote = p.ground ? r.coyote : Math.max(0, p.coyote - 1);
+    if (p.ground || p.swim) p.airJumps = ab.airJumps;
 
     const wet = inWater(W, p);
-    if (wet && type !== "tide") { hurt(W, s, i, "water"); return; }
+    if (wet && !ab.swims) { hurt(W, s, i, "water"); return; }
     if (wet && !swim) s.events.push({ type: "splash", i, x: p.x + PW / 2, y: p.y + PH / 2 });
     if (!wet && swim && p.vy < 0 && inp.jump) { p.vy = -r.jumpVel * SWIM.leap; p.jumpLock = true; s.events.push({ type: "jump", i, x: p.x + PW / 2, y: p.y + PH }); }
     p.swim = wet;
-    if (type !== "ember" && touches(W, p, "f")) { hurt(W, s, i, "fire"); return; }
+    if (!ab.fireproof && touches(W, p, "f")) { hurt(W, s, i, "fire"); return; }
     if (touches(W, p, "^")) { hurt(W, s, i, "spikes"); return; }
     W.gems.forEach((g, k) => {
       if (s.gems[k]) return;
@@ -596,10 +644,15 @@ function stepWorld(W, s, inputs) {
       if (overlap(p.x, p.y, PW, PH, a[0], a[1], a[2], a[3])) { s.gems[k] = true; s.events.push({ type: "star", i, x: a[0] + a[2] / 2, y: a[1] + a[3] / 2 }); }
     });
     if (!s.latched && touches(W, p, "l")) { s.latched = true; s.events.push({ type: "lever", i }); }
-  });
-  updateTriggers(W, s);
-  if (s.players.length && s.players.every(p => touches(W, p, "E"))) { s.won = true; s.events.push({ type: "win" }); }
-  return s;
+    // checkpoints: recorded only after this step's hazard checks passed, and only while standing,
+    // so a flag above a pit can't become a respawn point in mid-air (Brain sweety#E12)
+    if (p.ground) W.checkpoints.forEach((c, k) => {
+      if (s.check[i] === k) return;
+      const a = area("c", c);
+      if (overlap(p.x, p.y, PW, PH, a[0], a[1], a[2], a[3])) { s.check[i] = k; s.checkAt[i] = { x: p.x, y: p.y }; s.events.push({ type: "checkpoint", i, x: a[0] + a[2] / 2, y: a[1] }); }
+    });
+  }
+  p.dx = p.x - x0; p.dy = p.y - y0;
 }
 // SIM-END
 </script>
@@ -612,10 +665,7 @@ function stepWorld(W, s, inputs) {
     set(k, v) { try { localStorage.setItem("nw:" + k, JSON.stringify(v)); } catch (e) {} }
   };
 
-  const TYPE_INFO = {
-    ember: { name: "Ember type", text: "Walks through fire. Push into ice to melt it. Sinks in water." },
-    tide: { name: "Tide type", text: "Swims: hold jump to rise, and keep holding to leap out. Fire hurts." }
-  };
+  const TYPE_INFO = TYPES; // names and descriptions live with the abilities in the sim
 
   // ── colors from tokens, so the canvas follows the CSS ──
   const css = getComputedStyle(document.documentElement);
@@ -768,7 +818,7 @@ function stepWorld(W, s, inputs) {
     if (S.players.some(p => touches(W, p, "E"))) v = 0.9;
     if (v > audio.level) { audio.level = v; audio.music.setIntensity(v); }
   }
-  const SFX_OF = { jump: ["jump", 0.45], star: ["coin", 0.8], fall: ["hit", 0.7], lever: ["blip", 0.8], melt: ["crunch", 0.7], win: ["powerup", 0.9] };
+  const SFX_OF = { jump: ["jump", 0.45], star: ["coin", 0.8], fall: ["hit", 0.7], lever: ["blip", 0.8], checkpoint: ["blip", 0.5], melt: ["crunch", 0.7], win: ["powerup", 0.9] };
   function sfx(type) {
     const m = SFX_OF[type];
     if (!m || !audio.fx || !audio.on) return;
@@ -824,6 +874,7 @@ function stepWorld(W, s, inputs) {
       else if (ev.type === "star") { puff(ev.x, ev.y, C.gold, 14, 2.5); hudDirty = true; }
       else if (ev.type === "lever") puff(W.levers[0].tx * TILE + 16, W.levers[0].ty * TILE + 16, C.gold, 12, 2);
       else if (ev.type === "melt") puff(ev.x, ev.y, C.ice, 18, 2.4);
+      else if (ev.type === "checkpoint") puff(ev.x, ev.y + 6, col, 10, 1.6);
       else if (ev.type === "splash") puff(ev.x, ev.y, C.water, 10, 2);
     }
     S.events.length = 0;
@@ -989,6 +1040,17 @@ function stepWorld(W, s, inputs) {
       g.fillStyle = C.ink; g.fillRect(x + 1, y + TILE - 3, TILE - 2, 3);
       g.fillStyle = down ? C.gold : C["ink-soft"]; g.fillRect(x + 4, y + TILE - (down ? 5 : 9), TILE - 8, down ? 2 : 6);
     });
+    // checkpoint flags: a pole, and a pennant in the colour of each player who has it
+    W.checkpoints.forEach((c, k) => {
+      const x = c.tx * TILE + 14, y = c.ty * TILE;
+      g.fillStyle = C.ink; g.fillRect(x, y + 4, 3, TILE - 4);
+      const own = [0, 1].filter(i => S.check[i] === k);
+      const cols = own.length ? own.map(i => i ? C.p2 : C.p1) : [C["ink-soft"]];
+      cols.forEach((col, n) => {
+        const wave = Math.sin(t * 5 + n) * 2;
+        g.fillStyle = col; g.beginPath(); g.moveTo(x + 3, y + 4 + n * 7); g.lineTo(x + 16, y + 7 + n * 7 + wave); g.lineTo(x + 3, y + 11 + n * 7); g.fill();
+      });
+    });
     // levers
     W.levers.forEach(lv => {
       const x = lv.tx * TILE + 16, y = lv.ty * TILE + TILE;
@@ -1074,6 +1136,11 @@ function stepWorld(W, s, inputs) {
       const fl = 6 + Math.sin(t * 10 + i) * 1.5;
       g.fillStyle = C.ember; g.beginPath(); g.moveTo(x + w / 2 - 5, y + 1); g.quadraticCurveTo(x + w / 2 - 2, y - fl, x + w / 2 + 1, y - fl - 3); g.quadraticCurveTo(x + w / 2 + 2, y - fl * 0.4, x + w / 2 + 5, y + 1); g.fill();
       g.fillStyle = C.gold; g.beginPath(); g.moveTo(x + w / 2 - 2, y + 1); g.quadraticCurveTo(x + w / 2, y - fl * 0.6, x + w / 2 + 1, y - fl * 0.8); g.lineTo(x + w / 2 + 2, y + 1); g.fill();
+    } else if (type === "gust") {
+      const fl = Math.sin(t * 8 + i) * 2;
+      g.strokeStyle = C["ink-soft"]; g.lineWidth = 2; g.beginPath();
+      g.moveTo(x + w / 2 - 6, y + 2); g.quadraticCurveTo(x + w / 2 - 9, y - 5 + fl, x + w / 2 - 2, y - 7);
+      g.moveTo(x + w / 2 + 6, y + 2); g.quadraticCurveTo(x + w / 2 + 9, y - 5 - fl, x + w / 2 + 2, y - 7); g.stroke();
     } else if (type === "tide") {
       g.fillStyle = C.water; g.beginPath(); g.moveTo(x + w / 2 - 6 * p.face, y + 1); g.quadraticCurveTo(x + w / 2 - 2 * p.face, y - 9, x + w / 2 + 5 * p.face, y - 7); g.lineTo(x + w / 2 + 4 * p.face, y + 1); g.fill();
     }
