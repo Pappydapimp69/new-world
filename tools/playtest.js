@@ -152,9 +152,31 @@ async function browserCheck(levelIdx, inputs, shot) {
   const errors = [];
   page.on("pageerror", e => errors.push(String(e)));
   page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|fonts\.g/.test(m.text())) errors.push(m.text()); });
+  // fake controllers, read through the page's real getGamepads() polling
+  await page.addInitScript(() => {
+    const mk = i => ({ index: i, id: "test pad " + i, connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) });
+    window.__pads = [];
+    window.__padSet = (i, patch) => {
+      while (window.__pads.length <= i) window.__pads.push(mk(window.__pads.length));
+      const p = window.__pads[i];
+      if (patch.axes) p.axes = patch.axes.concat([0, 0, 0, 0]).slice(0, 4);
+      if (patch.buttons) for (const [b, v] of Object.entries(patch.buttons)) p.buttons[b] = { pressed: !!v, value: v ? 1 : 0 };
+    };
+    navigator.getGamepads = () => window.__pads;
+  });
   await page.goto("file://" + HTML);
   await page.waitForTimeout(600);
   const out = [];
+  const vis = () => page.evaluate(() => ({
+    screen: window.__nw.screen, mode: window.__nw.mode,
+    play: !document.getElementById("screenPlay").hidden, write: !document.getElementById("screenWrite").hidden, world: !document.getElementById("screenWorld").hidden,
+    writeTab: !document.getElementById("goWrite").disabled
+  }));
+  const shotOf = suffix => shot ? shot.replace(/\.png$/, "") + "-" + suffix + ".png" : null;
+  let v = await vis();
+  const firstOk = v.play && !v.write && !v.world && v.mode === "start" && !v.writeTab;
+  out.push(`  ${firstOk ? "✓" : "✗"} opens on the level only (play ${v.play}, write ${v.write}, world ${v.world}, write tab locked ${!v.writeTab})`);
+  if (shotOf("1-play")) { await page.screenshot({ path: shotOf("1-play"), fullPage: true }); out.push(`  · screenshot ${shotOf("1-play")}`); }
   // the page's own runtime: same LEVELS, same sim, real loaded page
   const won = await page.evaluate(({ idx, inputs }) => {
     const W = buildWorld(LEVELS[idx]); const s = newState(W);
@@ -175,11 +197,72 @@ async function browserCheck(levelIdx, inputs, shot) {
   const moved = after.x[0] > x0[0] + 10 && after.x[1] > x0[1] + 10;
   out.push(`  ${after.mode === "playing" && moved ? "✓" : "✗"} Enter starts, D and → move both players (${x0.map(Math.round)} → ${after.x.map(Math.round)})`);
   out.push(`  ${!after.ground ? "✓" : "✗"} W makes player 1 jump`);
-  await page.waitForTimeout(700);
-  if (shot) { await page.screenshot({ path: shot, fullPage: true }); out.push(`  · screenshot ${shot}`); }
+
+  // gamepads
+  const P = () => page.evaluate(() => window.__nw.state.players.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), ground: p.ground })));
+  await page.evaluate(i => window.__nw.loadLevel(i), levelIdx);
+  await page.evaluate(() => { window.__padSet(0, {}); window.__padSet(1, {}); });
+  await page.waitForTimeout(100);
+  await page.evaluate(() => window.__padSet(0, { buttons: { 0: 1 } }));   // A on pad 1, held
+  await page.waitForTimeout(250);
+  const g0 = await page.evaluate(() => window.__nw.mode);
+  const pAfterA = await P();
+  out.push(`  ${g0 === "playing" ? "✓" : "✗"} pad A starts the level`);
+  out.push(`  ${pAfterA[0].ground ? "✓" : "✗"} the A press that started the level did not also jump (held 250 ms)`);
+  await page.evaluate(() => window.__padSet(0, { buttons: { 0: 0 } }));
+  await page.waitForTimeout(60);
+  const gp0 = await P();
+  await page.evaluate(() => { window.__padSet(0, { axes: [1, 0] }); window.__padSet(1, { buttons: { 15: 1 } }); });
+  await page.waitForTimeout(350);
+  await page.evaluate(() => { window.__padSet(0, { axes: [0, 0] }); window.__padSet(1, { buttons: { 15: 0 } }); });
+  const gp1 = await P();
+  const padMoved = gp1[0].x > gp0[0].x + 10 && gp1[1].x > gp0[1].x + 10;
+  out.push(`  ${padMoved ? "✓" : "✗"} pad 1 stick moves player 1, pad 2 d-pad moves player 2 (${gp0.map(p => p.x)} → ${gp1.map(p => p.x)})`);
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__padSet(1, { buttons: { 0: 1 } }));
+  await page.waitForTimeout(120);
+  const gp2 = await P();
+  await page.evaluate(() => window.__padSet(1, { buttons: { 0: 0 } }));
+  out.push(`  ${!gp2[1].ground && gp2[0].ground ? "✓" : "✗"} pad 2 A makes only player 2 jump`);
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.__padSet(0, { buttons: { 3: 1 } }));
+  await page.waitForTimeout(60);
+  await page.evaluate(() => window.__padSet(0, { buttons: { 3: 0 } }));
+  const gp3 = await P();
+  const spawnX = await page.evaluate(() => window.__nw.world.spawns.map(s => Math.round(s.x)));
+  out.push(`  ${gp3[0].x === spawnX[0] && gp3[1].x === spawnX[1] ? "✓" : "✗"} pad Y regroups both players`);
+  const padText = await page.evaluate(() => document.getElementById("padInfo").textContent);
+  out.push(`  ${/controller 2/i.test(padText) ? "✓" : "✗"} shows who each controller plays ("${padText}")`);
+  await page.evaluate(() => { window.__pads.length = 0; });
+
+  // the screen flow: a real win through tick() opens Write, sending opens The world so far
+  await page.evaluate(i => { window.__nw.loadLevel(i); window.__nw.begin(); }, levelIdx);
+  const fed = await page.evaluate(inputs => window.__nw.feed(inputs), inputs);
+  await page.waitForTimeout(100);
+  v = await vis();
+  const toWrite = fed.won && v.screen === "write" && v.write && !v.play && !v.world && v.writeTab;
+  const note = await page.evaluate(() => !document.getElementById("clearedNote").hidden && document.getElementById("clearedNote").textContent);
+  out.push(`  ${toWrite ? "✓" : "✗"} clearing the level opens the Write screen and hides the rest (${note || "no cleared note"})`);
+  if (shotOf("2-write")) { await page.screenshot({ path: shotOf("2-write"), fullPage: true }); out.push(`  · screenshot ${shotOf("2-write")}`); }
+  await page.fill("#text1", "Add a double jump");
+  await page.click("#lock1");
+  await page.fill("#text2", "Make it nighttime");
+  await page.click("#lock2");
+  await page.click("#sendBtn");
+  await page.waitForTimeout(150);
+  v = await vis();
+  const banner = await page.evaluate(() => !document.getElementById("worldBanner").hidden);
+  const toWorld = v.screen === "world" && v.world && !v.write && !v.play && banner;
+  out.push(`  ${toWorld ? "✓" : "✗"} sending the turns opens The world so far with the waiting note`);
+  if (shotOf("3-world")) { await page.screenshot({ path: shotOf("3-world"), fullPage: true }); out.push(`  · screenshot ${shotOf("3-world")}`); }
+  await page.click("#goPlay");
+  v = await vis();
+  out.push(`  ${v.play && !v.world ? "✓" : "✗"} the step tabs go back to the level`);
+
   out.push(`  ${errors.length ? "✗" : "✓"} no script errors${errors.length ? ": " + errors.join(" | ") : ""}`);
   await browser.close();
-  return { ok: won && moved && !after.ground && !errors.length, out };
+  const allOk = !out.some(l => l.includes("✗"));
+  return { ok: won && moved && allOk && !errors.length, out };
 }
 
 (async () => {

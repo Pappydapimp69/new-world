@@ -46,6 +46,13 @@ body {
 .chip.ok { border-color: #3a7d55; color: #2e6a47; }
 .chip.warn { border-color: var(--gold); color: #8a5f06; }
 
+/* screens: one at a time, in play order */
+.steps { display: flex; flex-wrap: wrap; gap: 8px; }
+.steps button { background: transparent; color: var(--ink-soft); border: 1.5px solid var(--grid); font-size: 14px; padding: 7px 12px; }
+.steps button[aria-current="step"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.steps button:disabled { opacity: 0.45; }
+.cleared-note { margin: 0; font-weight: 700; color: #2e6a47; }
+
 /* stage */
 .stage { display: grid; gap: 10px; }
 .hud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; font-variant-numeric: tabular-nums; }
@@ -124,7 +131,13 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
     <span class="chip" id="sync">Connecting…</span>
   </header>
 
-  <section class="stage" aria-label="Game">
+  <nav class="steps" aria-label="Screens">
+    <button type="button" id="goPlay" data-go="play">1 · Play Level 1</button>
+    <button type="button" id="goWrite" data-go="write" disabled>2 · Write Level 2</button>
+    <button type="button" id="goWorld" data-go="world">3 · The world so far</button>
+  </nav>
+
+  <section class="stage" id="screenPlay" aria-label="Game">
     <div class="hud">
       <span class="lvl" id="hudLevel">Level 1</span>
       <span class="stat" id="hudGems">Stars 0/0</span>
@@ -140,7 +153,7 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
           <h2 id="startTitle">First Draft</h2>
           <div class="asked" id="startAsked"></div>
           <p class="built" id="startBuilt"></p>
-          <div class="row"><button id="startBtn" type="button">Start level</button><span class="hint">or press <kbd>Enter</kbd></span></div>
+          <div class="row"><button id="startBtn" type="button">Start level</button><span class="hint">or press <kbd>Enter</kbd>, or <kbd>A</kbd> on a controller</span></div>
         </div>
       </div>
       <div class="overlay" id="ovWin" hidden>
@@ -148,7 +161,7 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
           <span class="eyebrow">Cleared together</span>
           <h2 id="winTitle">Level 1 done</h2>
           <p class="built" id="winStats"></p>
-          <div class="row"><button id="toRoundBtn" type="button">Write the next level</button><button class="ghost" id="againBtn" type="button">Play it again</button></div>
+          <div class="row"><button id="toWorldBtn" type="button">Back to the world so far</button><button class="ghost" id="againBtn" type="button">Play it again</button></div>
         </div>
       </div>
     </div>
@@ -157,10 +170,16 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
       <span class="p2"><i class="dot" style="background:var(--p2)"></i><b id="keyName2">Player 2</b>: <kbd>←</kbd> <kbd>→</kbd> move, <kbd>↑</kbd> jump</span>
       <span>Stand on each other's heads. Both of you need to reach the gold door.</span>
     </div>
+    <div class="keys">
+      <span><b>Controller</b>: stick or d-pad to move, <kbd>A</kbd> jump, <kbd>Start</kbd> begin, <kbd>Y</kbd> regroup</span>
+      <span id="padInfo">Controllers work too. Press any button on one to connect it.</span>
+      <button class="ghost" id="padSwap" type="button" hidden>Swap controllers</button>
+    </div>
   </section>
 
-  <section class="round" id="round" aria-labelledby="roundTitle">
+  <section class="round" id="screenWrite" aria-labelledby="roundTitle" hidden>
     <header>
+      <p class="cleared-note" id="clearedNote" hidden></p>
       <span class="eyebrow">Your turns</span>
       <h2 id="roundTitle">Write Level 2</h2>
       <p>Take turns. Each of you writes one thing to add or change, like a new move, a hazard, a theme, a rule, or a story beat. When both are locked in, send them to Claude, who builds the next level from them.</p>
@@ -193,8 +212,12 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
     </div>
   </section>
 
-  <section class="book" aria-labelledby="bookTitle">
+  <section class="book" id="screenWorld" aria-labelledby="bookTitle" hidden>
     <h2 id="bookTitle">The world so far</h2>
+    <div class="waiting" id="worldBanner" hidden>
+      <strong id="worldBannerTitle">Level 2 is with Claude.</strong>
+      <span id="worldBannerText">In your Claude session, say <code>build the next level</code>. This page updates by itself when the level is ready.</span>
+    </div>
     <div class="pages" id="pages"></div>
   </section>
 </div>
@@ -424,6 +447,7 @@ function stepWorld(W, s, inputs) {
     showStart();
     renderHud();
     renderBook();
+    renderNav();
   }
 
   // ── input ──
@@ -441,30 +465,81 @@ function stepWorld(W, s, inputs) {
     if (mode === "playing" || e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
     keys.add(e.code);
     if (e.code === "KeyR" && mode === "playing") regroup(W, S);
-    if (e.code === "Enter" && mode === "start") { e.preventDefault(); begin(); }
+    if (e.code === "Enter" && mode === "start" && screen === "play") { e.preventDefault(); begin(); }
   });
   addEventListener("keyup", e => keys.delete(e.code));
   addEventListener("blur", () => keys.clear());
   const held = list => list.some(k => keys.has(k));
-  const inputFor = i => ({ left: held(KEYMAP[i].left), right: held(KEYMAP[i].right), jump: held(KEYMAP[i].jump) });
 
-  function begin() { mode = "playing"; $("ovStart").hidden = true; $("ovWin").hidden = true; keys.clear(); $("cv").focus?.(); }
+  // ── gamepads: polled every frame (Chrome hides a pad until a button is pressed,
+  // so the connect event can't be trusted). Pad 1 plays player 1 and pad 2 plays
+  // player 2, unless swapped. The keyboard always works alongside them.
+  const pads = { swap: !!store.get("padSwap", false), state: [{}, {}], prev: {}, latch: false, count: -1 };
+  function readPads() {
+    let list = [];
+    try { list = Array.from((navigator.getGamepads && navigator.getGamepads()) || []).filter(p => p && p.connected); } catch (e) {}
+    const out = [{}, {}];
+    let anyJump = false, startPress = false, regroupPress = false;
+    list.slice(0, 2).forEach((gp, k) => {
+      const who = k ^ (pads.swap ? 1 : 0);
+      const b = i => !!(gp.buttons[i] && gp.buttons[i].pressed);
+      const ax = gp.axes[0] || 0;
+      const jump = b(0) || b(1) || b(12);
+      out[who] = { left: ax < -0.35 || b(14), right: ax > 0.35 || b(15), jump };
+      anyJump = anyJump || jump;
+      const prev = pads.prev[gp.index] || {};
+      const now = { start: b(9), regroup: b(3) || b(8), jump };
+      if (now.start && !prev.start) startPress = true;
+      if (now.jump && !prev.jump) startPress = startPress || mode === "start";
+      if (now.regroup && !prev.regroup) regroupPress = true;
+      pads.prev[gp.index] = now;
+    });
+    // the press that starts a level must not also count as a jump: hold jump off until released
+    if (pads.latch) { if (anyJump) out.forEach(o => { o.jump = false; }); else pads.latch = false; }
+    pads.state = out;
+    if (list.length !== pads.count) { pads.count = list.length; renderPadInfo(); }
+    if (screen === "play") {
+      if (startPress && mode === "start") begin();
+      else if (regroupPress && mode === "playing") regroup(W, S);
+    }
+  }
+  function renderPadInfo() {
+    const el = $("padInfo"), sw = $("padSwap");
+    const n = Math.min(pads.count, 2);
+    if (n <= 0) { el.textContent = "Controllers work too. Press any button on one to connect it."; sw.hidden = true; return; }
+    const who = k => ((k ^ (pads.swap ? 1 : 0)) ? names.p2 : names.p1);
+    el.textContent = n === 1
+      ? `Controller connected: it plays ${who(0)}.`
+      : `Controller 1 plays ${who(0)}, controller 2 plays ${who(1)}.`;
+    sw.hidden = false;
+  }
+
+  const inputFor = i => {
+    const p = pads.state[i] || {};
+    return { left: held(KEYMAP[i].left) || !!p.left, right: held(KEYMAP[i].right) || !!p.right, jump: held(KEYMAP[i].jump) || !!p.jump };
+  };
+
+  function begin() { mode = "playing"; $("ovStart").hidden = true; $("ovWin").hidden = true; keys.clear(); pads.latch = true; $("cv").focus?.(); }
 
   // ── loop ──
   const STEP = 1000 / 60;
   let acc = 0, last = performance.now();
   function frame(now) {
     acc += Math.min(now - last, 100); last = now;
+    readPads();
     while (acc >= STEP) {
-      if (mode === "playing") {
-        stepWorld(W, S, [inputFor(0), inputFor(1)]);
-        handleEvents();
-        if (S.won) win();
-      }
+      if (mode === "playing") tick([inputFor(0), inputFor(1)]);
       acc -= STEP;
     }
     draw(now);
     requestAnimationFrame(frame);
+  }
+
+  // one game step: the only path from input to a cleared level
+  function tick(inputs) {
+    stepWorld(W, S, inputs);
+    handleEvents();
+    if (S.won && mode === "playing") win();
   }
 
   function handleEvents() {
@@ -492,12 +567,49 @@ function stepWorld(W, s, inputs) {
     mode = "won";
     cleared[LEVELS[levelIdx].n] = true; store.set("cleared", cleared);
     const got = S.gems.filter(Boolean).length;
-    $("winTitle").textContent = `Level ${LEVELS[levelIdx].n} done`;
-    $("winStats").textContent = `${got} of ${S.gems.length} stars, ${S.falls} ${S.falls === 1 ? "fall" : "falls"}, ${Math.round(S.t / 60)} seconds.`;
-    $("toRoundBtn").hidden = levelIdx !== LEVELS.length - 1;
-    $("ovWin").hidden = false;
+    const stats = `${got} of ${S.gems.length} stars, ${S.falls} ${S.falls === 1 ? "fall" : "falls"}, ${Math.round(S.t / 60)} seconds.`;
     renderBook();
+    if (levelIdx === LEVELS.length - 1) {
+      // the newest level: clearing it opens the turns for the next one
+      $("clearedNote").textContent = `Level ${LEVELS[levelIdx].n} cleared together. ${stats}`;
+      $("clearedNote").hidden = false;
+      show("write");
+      return;
+    }
+    $("winTitle").textContent = `Level ${LEVELS[levelIdx].n} done`;
+    $("winStats").textContent = stats;
+    $("ovWin").hidden = false;
   }
+
+  // ── screens: show() is the only code that hides or reveals a screen ──
+  const SCREENS = { play: "screenPlay", write: "screenWrite", world: "screenWorld" };
+  let screen = "play";
+  const writeOpen = () => !!cleared[LEVELS[LEVELS.length - 1].n] || round.p1Locked || round.p2Locked || round.status !== "drafting";
+  function show(name) {
+    if (name === "write" && !writeOpen()) name = "play";
+    if (name !== "play" && mode === "playing") { mode = "start"; keys.clear(); showStart(true); }
+    screen = name;
+    Object.entries(SCREENS).forEach(([k, id]) => { $(id).hidden = k !== name; });
+    renderNav();
+    if (name === "write") renderRound();
+    if (name === "world") renderBook();
+    window.scrollTo({ top: 0 });
+    if (name === "write") setTimeout(() => { const t = round.p1Locked ? $("text2") : $("text1"); if (!t.disabled && !t.hidden) t.focus({ preventScroll: true }); }, 50);
+  }
+  function renderNav() {
+    $("goPlay").textContent = `1 · Play Level ${LEVELS[levelIdx].n}`;
+    $("goWrite").textContent = `2 · Write Level ${NEXT}`;
+    $("goWrite").disabled = !writeOpen();
+    $("goWrite").title = writeOpen() ? "" : `Clear Level ${LEVELS[LEVELS.length - 1].n} first`;
+    ["goPlay", "goWrite", "goWorld"].forEach(id => {
+      if ($(id).dataset.go === screen) $(id).setAttribute("aria-current", "step"); else $(id).removeAttribute("aria-current");
+    });
+    const sent = round.status === "ready" || round.status === "built";
+    $("worldBanner").hidden = !sent;
+    $("worldBannerTitle").textContent = round.status === "built" ? `Level ${NEXT} is built. Reload the page to play it.` : `Level ${NEXT} is with Claude.`;
+    $("worldBannerText").hidden = round.status === "built";
+  }
+  ["goPlay", "goWrite", "goWorld"].forEach(id => $(id).addEventListener("click", () => show($(id).dataset.go)));
 
   // ── drawing ──
   const cv = $("cv"), g = cv.getContext("2d");
@@ -636,8 +748,9 @@ function stepWorld(W, s, inputs) {
     return box;
   }
 
-  function showStart() {
+  function showStart(resume) {
     const L = LEVELS[levelIdx];
+    $("startBtn").textContent = resume ? "Resume level" : "Start level";
     $("startEyebrow").textContent = `Level ${L.n}`;
     $("startTitle").textContent = L.name;
     $("startAsked").replaceWith(Object.assign(saidBlock(L.asked), { id: "startAsked" }));
@@ -658,8 +771,8 @@ function stepWorld(W, s, inputs) {
       meta.append(saidBlock(L.asked));
       const b = document.createElement("p"); b.className = "built"; b.textContent = L.built; meta.append(b);
       const btn = document.createElement("button"); btn.type = "button"; btn.className = "ghost";
-      btn.textContent = idx === levelIdx ? "Playing" : "Play"; btn.disabled = idx === levelIdx;
-      btn.addEventListener("click", () => { loadLevel(idx); $("cv").scrollIntoView({ block: "center", behavior: "smooth" }); });
+      btn.textContent = `Play level ${L.n}`;
+      btn.addEventListener("click", () => { loadLevel(idx); show("play"); });
       row.append(num, meta, btn);
       box.append(row);
     });
@@ -667,8 +780,9 @@ function stepWorld(W, s, inputs) {
 
   $("startBtn").addEventListener("click", begin);
   $("againBtn").addEventListener("click", () => loadLevel(levelIdx));
-  $("toRoundBtn").addEventListener("click", () => { $("round").scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => (round.p1Locked ? $("text2") : $("text1")).focus({ preventScroll: true }), 400); });
+  $("toWorldBtn").addEventListener("click", () => show("world"));
   $("regroupBtn").addEventListener("click", () => { if (mode === "playing") regroup(W, S); });
+  $("padSwap").addEventListener("click", () => { pads.swap = !pads.swap; store.set("padSwap", pads.swap); renderPadInfo(); });
 
   // ── turns: shared through the artifact's database, so Claude can read them ──
   const NEXT = LEVELS[LEVELS.length - 1].n + 1;
@@ -684,6 +798,7 @@ function stepWorld(W, s, inputs) {
     $("turnName1").textContent = names.p1; $("turnName2").textContent = names.p2;
     if (document.activeElement !== $("name1")) $("name1").value = names.p1;
     if (document.activeElement !== $("name2")) $("name2").value = names.p2;
+    if (pads.count > 0) renderPadInfo();
   }
 
   function renderRound() {
@@ -710,6 +825,7 @@ function stepWorld(W, s, inputs) {
     $("sendHint").textContent = both ? "Claude reads both and builds the next level." : "Both turns need to be locked in first.";
     $("waitTitle").textContent = round.status === "built" ? `Level ${NEXT} is built. Reload to play it.` : "Sent. Claude is up next.";
     $("copyBtn").hidden = !!db;
+    renderNav();
   }
 
   function save() {
@@ -741,7 +857,7 @@ function stepWorld(W, s, inputs) {
     const d = store.get("draft-" + NEXT + "-" + n, "");
     if (d && !round["p" + n + "Locked"]) $("text" + n).value = d;
   });
-  $("sendBtn").addEventListener("click", () => { round.status = "ready"; save(); });
+  $("sendBtn").addEventListener("click", () => { round.status = "ready"; save(); show("world"); });
   $("unsendBtn").addEventListener("click", () => { round.status = "drafting"; save(); });
   $("copyBtn").addEventListener("click", async () => {
     const text = `New World, Level ${NEXT}\n${names.p1}: ${round.p1}\n${names.p2}: ${round.p2}`;
@@ -789,7 +905,12 @@ function stepWorld(W, s, inputs) {
   function showStartIfIdle() { if (mode === "start") showStart(); renderBook(); }
 
   // test hook (read-only view of the running game, used by tools/playtest.js)
-  window.__nw = { get state() { return S; }, get world() { return W; }, get mode() { return mode; }, begin, loadLevel };
+  // feed() pushes recorded inputs through tick(), the same path the keyboard loop uses
+  window.__nw = {
+    get state() { return S; }, get world() { return W; }, get mode() { return mode; }, get screen() { return screen; },
+    begin, loadLevel, show,
+    feed(frames) { for (const f of frames) if (mode === "playing") tick(f); return { mode, screen, won: S.won }; }
+  };
 
   loadLevel(LEVELS.length - 1);
   requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });

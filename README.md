@@ -7,6 +7,7 @@ builds the next level from both.
 Play: https://claude.ai/artifact/JFfMRHJHi5XYgiL4oi83mw
 
 - Player 1: `A` `D` to move, `W` to jump. Player 2: arrow keys. `R` sends you both back to the start.
+- Controllers: stick or d-pad to move, `A` to jump, `Start` or `A` to begin, `Y` to regroup. Controller 1 plays player 1 and controller 2 plays player 2 (swap on the page).
 - You can stand on each other's heads. Both of you have to reach the gold door.
 
 ## Building the next level (for Claude)
