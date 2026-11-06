@@ -9,6 +9,8 @@ Play: https://claude.ai/artifact/JFfMRHJHi5XYgiL4oi83mw
 - Player 1: `A` `D` to move, `W` to jump. Player 2: arrow keys. `R` sends you both back to the start.
 - Controllers: stick or d-pad to move, `A` to jump, `Start` or `A` to begin, `Y` to regroup. Controller 1 plays player 1 and controller 2 plays player 2 (swap on the page).
 - You can stand on each other's heads. Both of you have to reach the gold door.
+- From Level 2 on, each player has a type: Ember walks through fire and melts ice but sinks in water; Tide swims but fire hurts.
+- Music and sound effects come from the Sound-engine (vendored in `vendor/sound-engine` by `brain engine vendor`, inlined into the page by `node tools/inline-sound.js`). The Sound button mutes.
 
 ## Building the next level (for Claude)
 Standing rule from the players: query Brain, measure in the sim, and iterate until
@@ -22,7 +24,8 @@ When the players say "build the next level":
 3. Add level N to `LEVELS` in `game/index.html`, with `asked`, `built` (one plain sentence),
    `map`, `rules`, and a `testPlan` that includes an `expect: "unreachable"` step for every co-op gate.
    Change the engine if a request needs a new mechanic, and add a matching move to the playtest search.
-4. `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png` and `node tools/fitcheck.js` must both PASS. Look at the screenshots.
+4. `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png`, `node tools/fitcheck.js` and `node tools/musiccheck.mjs` must all PASS. Look at the screenshots.
+   A new song goes in `SONGS`; a level picks it with `song:`. After updating `vendor/sound-engine`, rerun `node tools/inline-sound.js`.
 5. Republish `game/index.html` to the same URL, then set the round doc's `status` to `"built"`.
 6. Commit, push, and `brain note` anything you learned.
 

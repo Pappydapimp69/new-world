@@ -42,17 +42,29 @@ for (const d of [-1, 0, 1]) for (const hold of [5, 11, 40]) for (const steer of 
     return I(h, k < hold);
   }, len: 150 });
 }
+// swimming: short strokes in each direction, with and without jump (stroke up)
+for (const d of [-1, 0, 1]) for (const j of [0, 1]) MACROS.push({ kind: "swim", f: () => I(d, j), len: 10 });
 const MAX_NODES = 60000;
 
 function reached(W, s, mover, to) {
   if (to === "won") return s.won;
   if (typeof to === "function") return to(W, s, mover);
+  if (to === "i") return s.melted.length > 0;              // some ice melted
+  if (to.startsWith("*@")) {                                 // one specific star, "*@col,row"
+    const [tx, ty] = to.slice(2).split(",").map(Number);
+    const k = W.gems.findIndex(g => g.tx === tx && g.ty === ty);
+    if (k < 0) throw new Error("no star at " + to);
+    return s.gems[k];
+  }
   return touches(W, s.players[mover], to);
 }
 
 function key(s, m) {
   const p = s.players[m];
-  return `${Math.round(p.x / 3)},${Math.round(p.y / 4)},${Math.round(p.vx)},${p.ground ? 1 : 0},${s.latched ? 1 : 0},${s.gateOpen ? 1 : 0}`;
+  const world = `${s.latched ? 1 : 0},${s.gateOpen ? 1 : 0},${s.melted.length}`;
+  // swimming is slow and forgiving, so a coarse 8 px cell and the direction of travel is enough
+  if (p.swim) return `s${Math.round(p.x / 8)},${Math.round(p.y / 8)},${Math.sign(Math.round(p.vy))},${world}`;
+  return `${Math.round(p.x / 3)},${Math.round(p.y / 4)},${Math.round(p.vx)},${p.ground ? 1 : 0},${world}`;
 }
 
 // Runs one macro. Returns {state, frames, hit, died}.
@@ -65,10 +77,10 @@ function runMacro(W, start, mover, mac, to) {
     stepWorld(W, s, inp); s.events.length = 0; frames.push(inp);
     if (s.falls !== falls0) return { died: true };
     if (reached(W, s, mover, to)) return { state: s, frames, hit: true };
-    if (mac.kind === "jump" && k > 2 && s.players[mover].ground) break;
+    if (mac.kind === "jump" && k > 2 && (s.players[mover].ground || s.players[mover].swim)) break;
   }
-  // a walk that steps off an edge keeps holding its direction until it lands
-  if (mac.kind !== "jump") for (let k = 0; k < 120 && !s.players[mover].ground; k++) {
+  // a walk that steps off an edge keeps holding its direction until it lands (or starts swimming)
+  if (mac.kind === "walk" || mac.kind === "wait") for (let k = 0; k < 120 && !s.players[mover].ground && !s.players[mover].swim; k++) {
     const inp = Array.from({ length: n }, (_, i) => (i === mover ? mac.f(0) : {}));
     stepWorld(W, s, inp); s.events.length = 0; frames.push(inp);
     if (s.falls !== falls0) return { died: true };
@@ -84,7 +96,9 @@ function search(W, start, mover, to) {
   const seen = new Set([key(start, mover)]);
   for (let head = 0; head < nodes.length; head++) {
     if (nodes.length > MAX_NODES) return { inputs: null, nodes: nodes.length, capped: true };
+    const swimming = nodes[head].s.players[mover].swim;
     for (const mac of MACROS) {
+      if ((mac.kind === "swim") !== swimming && !(swimming && mac.kind === "jump")) continue;
       const r = runMacro(W, nodes[head].s, mover, mac, to);
       if (r.died) continue;
       const k = key(r.state, mover);
@@ -147,7 +161,18 @@ function playtest(level) {
 
 async function browserCheck(levelIdx, inputs, shot) {
   const { chromium } = require("playwright");
-  const browser = await chromium.launch();
+  // served over http (as the real page is), not file://: AudioWorklets can't load from a null origin
+  const http = require("http");
+  const server = http.createServer((req, res) => {
+    const f = path.join(path.dirname(HTML), decodeURIComponent(new URL(req.url, "http://x").pathname));
+    if (!f.startsWith(path.dirname(HTML))) { res.writeHead(403); return res.end(); }
+    fs.readFile(f, (err, data) => {
+      if (err) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { "content-type": f.endsWith(".html") ? "text/html; charset=utf-8" : "text/javascript; charset=utf-8" }); res.end(data);
+    });
+  }).listen(0);
+  const URL_ = `http://localhost:${server.address().port}/index.html`;
+  const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
   const errors = [];
   page.on("pageerror", e => errors.push(String(e)));
@@ -164,7 +189,7 @@ async function browserCheck(levelIdx, inputs, shot) {
     };
     navigator.getGamepads = () => window.__pads;
   });
-  await page.goto("file://" + HTML);
+  await page.goto(URL_);
   await page.waitForTimeout(600);
   const out = [];
   const vis = () => page.evaluate(() => ({
@@ -197,6 +222,21 @@ async function browserCheck(levelIdx, inputs, shot) {
   const moved = after.x[0] > x0[0] + 10 && after.x[1] > x0[1] + 10;
   out.push(`  ${after.mode === "playing" && moved ? "✓" : "✗"} Enter starts, D and → move both players (${x0.map(Math.round)} → ${after.x.map(Math.round)})`);
   out.push(`  ${!after.ground ? "✓" : "✗"} W makes player 1 jump`);
+
+  // sound: the Sound-engine starts on the level's start, plays this level's song, and is audible
+  if (LEVELS[levelIdx].song) {
+    await page.waitForTimeout(1200);
+    const a = await page.evaluate(() => window.__nw.audio);
+    out.push(`  ${a.ready && a.state === "running" && a.song === LEVELS[levelIdx].song ? "✓" : "✗"} sound engine running (loaded via ${a.via || a.error}), song "${a.song}"`);
+    const lv = await page.evaluate(() => new Promise(res => {
+      const eng = window.__nwAudioEngine; if (!eng) return res({ rms: 0, peak: 0 });
+      const an = new AnalyserNode(eng.ctx, { fftSize: 2048 }); eng.limiter.connect(an);
+      const buf = new Float32Array(2048); let max = 0, sum = 0, n = 0; const t0 = performance.now();
+      (function poll() { an.getFloatTimeDomainData(buf); for (const v of buf) { max = Math.max(max, Math.abs(v)); sum += v * v; n++; }
+        if (performance.now() - t0 < 1500) setTimeout(poll, 40); else { eng.limiter.disconnect(an); res({ peak: max, rms: Math.sqrt(sum / n) }); } })();
+    }));
+    out.push(`  ${lv.rms > 0.01 && lv.peak < 1 ? "✓" : "✗"} music is audible and unclipped (rms ${lv.rms.toFixed(3)}, peak ${lv.peak.toFixed(2)})`);
+  }
 
   // gamepads
   const P = () => page.evaluate(() => window.__nw.state.players.map(p => ({ x: Math.round(p.x), y: Math.round(p.y), ground: p.ground })));
@@ -235,7 +275,8 @@ async function browserCheck(levelIdx, inputs, shot) {
   out.push(`  ${/controller 2/i.test(padText) ? "✓" : "✗"} shows who each controller plays ("${padText}")`);
   await page.evaluate(() => { window.__pads.length = 0; });
 
-  // the screen flow: a real win through tick() opens Write, sending opens The world so far
+  // the screen flow (newest level only): a real win through tick() opens Write, sending opens The world so far
+  if (levelIdx === LEVELS.length - 1) {
   await page.evaluate(i => { window.__nw.loadLevel(i); window.__nw.begin(); }, levelIdx);
   const fed = await page.evaluate(inputs => window.__nw.feed(inputs), inputs);
   await page.waitForTimeout(100);
@@ -258,9 +299,11 @@ async function browserCheck(levelIdx, inputs, shot) {
   await page.click("#goPlay");
   v = await vis();
   out.push(`  ${v.play && !v.world ? "✓" : "✗"} the step tabs go back to the level`);
+  }
 
   out.push(`  ${errors.length ? "✗" : "✓"} no script errors${errors.length ? ": " + errors.join(" | ") : ""}`);
   await browser.close();
+  server.close();
   const allOk = !out.some(l => l.includes("✗"));
   return { ok: won && moved && allOk && !errors.length, out };
 }
