@@ -59,9 +59,11 @@ function reached(W, s, mover, to) {
   return touches(W, s.players[mover], to);
 }
 
-function key(s, m) {
+function key(s, m, W) {
   const p = s.players[m];
-  const world = `${s.latched ? 1 : 0},${s.gateOpen ? 1 : 0},${s.melted.length}`;
+  // with beat blocks, when matters too: which of 4 beats, and which half of it
+  const beat = W && W.beatFrames ? `,${Math.floor(s.t / W.beatFrames) % 4}${Math.floor((s.t % W.beatFrames) * 2 / W.beatFrames)}` : "";
+  const world = `${s.latched ? 1 : 0},${s.gateOpen ? 1 : 0},${s.melted.length}${beat}`;
   // swimming is slow and forgiving, so a coarse 8 px cell and the direction of travel is enough
   if (p.swim) return `s${Math.round(p.x / 8)},${Math.round(p.y / 8)},${Math.sign(Math.round(p.vy))},${world}`;
   return `${Math.round(p.x / 3)},${Math.round(p.y / 4)},${Math.round(p.vx)},${p.ground ? 1 : 0},${world}`;
@@ -93,7 +95,7 @@ function search(W, start, mover, to) {
   if (reached(W, start, mover, to)) return { inputs: [], end: start, nodes: 1 };
   // settle onto the ground first
   const nodes = [{ s: start, parent: -1, frames: [] }];
-  const seen = new Set([key(start, mover)]);
+  const seen = new Set([key(start, mover, W)]);
   for (let head = 0; head < nodes.length; head++) {
     if (nodes.length > MAX_NODES) return { inputs: null, nodes: nodes.length, capped: true };
     const swimming = nodes[head].s.players[mover].swim;
@@ -101,7 +103,7 @@ function search(W, start, mover, to) {
       if ((mac.kind === "swim") !== swimming && !(swimming && mac.kind === "jump")) continue;
       const r = runMacro(W, nodes[head].s, mover, mac, to);
       if (r.died) continue;
-      const k = key(r.state, mover);
+      const k = key(r.state, mover, W);
       if (!r.hit && seen.has(k)) continue;
       seen.add(k);
       nodes.push({ s: r.state, parent: head, frames: r.frames });
@@ -308,7 +310,8 @@ async function browserCheck(levelIdx, inputs, shot) {
   return { ok: won && moved && allOk && !errors.length, out };
 }
 
-(async () => {
+module.exports = { LEVELS, api, search, playtest };
+if (require.main === module) (async () => {
   const args = process.argv.slice(2);
   const which = args.find(a => /^(\d+|all)$/.test(a)) || String(LEVELS[LEVELS.length - 1].n);
   const shotI = args.indexOf("--shot");

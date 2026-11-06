@@ -17,6 +17,7 @@
   --water: #5d9fd8;
   --ember: #ea7a2c;
   --ice: #cde8f0;
+  --grass: #5e9c4c;
   --display: "Young Serif", Georgia, "Times New Roman", serif;
   --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
   --hand: "Kalam", "Comic Sans MS", "Bradley Hand", cursive;
@@ -291,37 +292,38 @@ const LEVELS = [
     n: 2,
     name: "Two Types",
     asked: { p1: { name: "Player 1", text: "add music using the sound engine" }, p2: { name: "Player 2", text: "give one player powers the other player doesn't have. and make it more like pokemon" } },
-    built: "You each have a type now. Ember walks through fire and melts ice but sinks in water. Tide swims but can't touch fire. Tide swims the tunnel to the lever, and Ember melts the ice that seals the door. Music comes from the Sound-engine and builds as you get closer.",
+    built: "A journey across three places: a sea, a volcano and an ice cave. You each have a type: Ember walks through fire and melts ice but sinks in water, and Tide swims but can't touch fire. The music runs the beat blocks, which appear in time with the song, so cross on the beat. Tide holds the plate at the bottom of the sea to keep Ember's gate open, and Ember melts the ice that seals the door.",
     song: "twoTypes",
-    rules: { types: ["ember", "tide"] },
+    theme: "isles",
+    rules: { types: ["ember", "tide"], bpm: 128 },
     map: [
       "##############################",
-      "#.............#..........i...#",
-      "#.............#..........i...#",
-      "#.............#..........i...#",
-      "#.............#..........i.E.#",
-      "#.............#.........######",
-      "#.............#......*.......#",
-      "#..*..........#......##......#",
-      "#.###.........g..............#",
-      "#.............g.........######",
-      "#.12..........g.....l....ff.*#",
-      "######www##w####ww############",
-      "######wwwwwwww#www############",
-      "######wwwwwwwwwwww############",
-      "######wwwwwwwwwwww############",
-      "######w$wwwwww#www############",
+      "#............#.........#.....#",
+      "#............#.........#.....#",
+      "#............#.........#.....#",
+      "#............#.........#.....#",
+      "#12..........g.........#.....#",
+      "####.........g.........#.....#",
+      "####.bb.BB.bb###.......i.....#",
+      "####.........#....BB...i.....#",
+      "####wwwwwwwww#.........i.*...#",
+      "####wwwwwwwww#...ffFff.i...E.#",
+      "####wwwwwwwww#ww##############",
+      "####wwwwwwwww#ww##############",
+      "####wwwwwwwwwwww##############",
+      "####wwwwwwwwwwww##############",
+      "####w$wwPwwww#ww##############",
       "##############################"
     ],
     testPlan: [
-      { mover: 0, to: "l", expect: "unreachable", note: "Ember alone can't reach the lever (gate shut, water in the way)" },
-      { mover: 1, to: "E", expect: "unreachable", note: "Tide alone can't reach the door (ice)" },
-      { mover: 1, to: "*@28,10", expect: "unreachable", note: "only Ember can get the star in the fire" },
-      { mover: 0, to: "*@7,15", expect: "unreachable", note: "only Tide can get the star at the bottom of the pool" },
-      { mover: 1, to: "l", note: "Tide swims the tunnel and pulls the lever" },
-      { mover: 0, to: "i", note: "Ember crosses the gate and melts the ice" },
-      { mover: 0, to: "E", note: "Ember reaches the door" },
-      { mover: 1, to: "E", note: "Tide reaches the door" }
+      { mover: 0, to: "i", expect: "unreachable", note: "Ember alone can't get past the gate" },
+      { mover: 1, to: "E", expect: "unreachable", note: "Tide alone can't get into the ice cave" },
+      { mover: 1, to: "*@19,10", expect: "unreachable", note: "only Ember can get the star in the fire" },
+      { mover: 0, to: "*@5,15", expect: "unreachable", note: "only Tide can get the star at the bottom of the sea" },
+      { mover: 1, to: "p", note: "Tide dives to the plate at the bottom of the sea" },
+      { mover: 0, to: "i", note: "Ember crosses the sea on the beat blocks, through the held gate, over the fire, and melts the ice" },
+      { mover: 1, to: "E", note: "Tide swims the tunnel, crosses the fire on a beat block, and reaches the door" },
+      { mover: 0, to: "E", note: "Ember reaches the door" }
     ]
   }
 ];
@@ -400,6 +402,9 @@ function buildWorld(level) {
   const map = level.map, h = map.length, w = map[0].length;
   const W = { w, h, map, rules: Object.assign({}, PHYS, level.rules || {}), spawns: [], gems: [], plates: [], levers: [], exits: [], gates: [], spikes: [], fires: [], ice: [], water: [] };
   W.types = (level.rules && level.rules.types) || [];
+  W.beats = [];
+  // beat blocks follow the level's song: 'b' is solid for two beats, then 'B' for two
+  W.beatFrames = level.rules && level.rules.bpm ? 3600 / level.rules.bpm : 0;
   for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
     const c = map[ty][tx];
     if (c === "1" || c === "2") W.spawns[+c - 1] = { x: tx * TILE + (TILE - PW) / 2, y: (ty + 1) * TILE - PH };
@@ -413,13 +418,16 @@ function buildWorld(level) {
     else if (c === "i") W.ice.push({ tx, ty });
     else if (c === "w") W.water.push({ tx, ty });
     else if (c === "$") { W.gems.push({ tx, ty }); W.water.push({ tx, ty }); } // a star under water
+    else if (c === "P") { W.plates.push({ tx, ty }); W.water.push({ tx, ty }); } // a plate under water
+    else if (c === "F") { W.fires.push({ tx, ty }); W.gems.push({ tx, ty }); } // a star in the fire
+    else if (c === "b" || c === "B") W.beats.push({ tx, ty, grp: c === "b" ? 0 : 1 });
   }
   return W;
 }
 
 function newState(W) {
   return {
-    t: 0, won: false, latched: false, plateDown: false, gateOpen: false, falls: 0, melted: [],
+    t: 0, won: false, latched: false, plateDown: false, gateOpen: false, falls: 0, melted: [], beatGhost: [],
     gems: W.gems.map(() => false), events: [],
     players: W.spawns.map(s => ({ x: s.x, y: s.y, vx: 0, vy: 0, ground: false, coyote: 0, jumpLock: false, face: 1, swim: false }))
   };
@@ -427,7 +435,7 @@ function newState(W) {
 
 function cloneState(s) {
   return {
-    t: s.t, won: s.won, latched: s.latched, plateDown: s.plateDown, gateOpen: s.gateOpen, falls: s.falls, melted: s.melted.slice(),
+    t: s.t, won: s.won, latched: s.latched, plateDown: s.plateDown, gateOpen: s.gateOpen, falls: s.falls, melted: s.melted.slice(), beatGhost: s.beatGhost.slice(),
     gems: s.gems.slice(), events: [],
     players: s.players.map(p => ({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, ground: p.ground, coyote: p.coyote, jumpLock: p.jumpLock, face: p.face, swim: p.swim }))
   };
@@ -456,13 +464,19 @@ const isMelted = (s, tx, ty) => s.melted.indexOf(tx + "," + ty) >= 0;
 function tileAt(W, tx, ty) {
   if (tx < 0 || ty < 0 || tx >= W.w || ty >= W.h) return "#";
   const c = W.map[ty][tx];
-  return c === "$" ? "w" : c;
+  return c === "$" || c === "P" ? "w" : c === "F" ? "f" : c;
 }
+function beatOn(W, s, grp) { return W.beatFrames > 0 && (Math.floor(s.t / W.beatFrames) % 4 < 2) === (grp === 0); }
 function solidAt(W, s, tx, ty) {
   const c = tileAt(W, tx, ty);
   if (c === "#") return true;
   if (c === "g") return !s.gateOpen;
   if (c === "i") return !isMelted(s, tx, ty);
+  if (c === "b" || c === "B") {
+    if (!beatOn(W, s, c === "b" ? 0 : 1)) return false;
+    // a block that switches on around a player stays open while they're inside, so nobody gets stuck
+    return s.beatGhost.indexOf(tx + "," + ty) < 0;
+  }
   return false;
 }
 function inWater(W, p) { return tileAt(W, Math.floor((p.x + PW / 2) / TILE), Math.floor((p.y + PH / 2) / TILE)) === "w"; }
@@ -524,6 +538,8 @@ function respawn(W, s, i) {
 function regroup(W, s) { s.players.forEach((_, i) => respawn(W, s, i)); s.events.push({ type: "regroup" }); }
 
 function updateTriggers(W, s) {
+  // beat blocks a player is already inside (measured before anyone moves this step)
+  s.beatGhost = W.beats.filter(b => s.players.some(p => overlap(p.x, p.y, PW, PH, b.tx * TILE, b.ty * TILE, TILE, TILE))).map(b => b.tx + "," + b.ty);
   s.plateDown = s.players.some(p => touches(W, p, "p"));
   const inGate = s.players.some(p => touches(W, p, "g"));
   s.gateOpen = s.latched || s.plateDown || (s.gateOpen && inGate);
@@ -604,7 +620,7 @@ function stepWorld(W, s, inputs) {
   // ── colors from tokens, so the canvas follows the CSS ──
   const css = getComputedStyle(document.documentElement);
   const C = {};
-  ["paper", "paper-deep", "grid", "ink", "ink-soft", "p1", "p2", "gold", "hazard", "water", "ember", "ice"].forEach(k => C[k] = css.getPropertyValue("--" + k).trim());
+  ["paper", "paper-deep", "grid", "ink", "ink-soft", "p1", "p2", "gold", "hazard", "water", "ember", "ice", "grass"].forEach(k => C[k] = css.getPropertyValue("--" + k).trim());
 
   // ── state ──
   let names = { p1: "Player 1", p2: "Player 2" };
@@ -945,6 +961,19 @@ function stepWorld(W, s, inputs) {
         g.quadraticCurveTo(x + 9 + k * 10, y + TILE - fl * 0.5, x + 12 + k * 10, y + TILE); g.fill();
       }
     });
+    // beat blocks: solid on their two beats, an outline otherwise
+    W.beats.forEach(bt => {
+      const x = bt.tx * TILE, y = bt.ty * TILE, on = beatOn(W, S, bt.grp);
+      const col = bt.grp ? C.p2 : C.p1;
+      if (on) {
+        g.fillStyle = col; g.fillRect(x + 1, y + 1, TILE - 2, TILE - 2);
+        g.fillStyle = C.paper; g.globalAlpha = 0.85;
+        g.beginPath(); g.ellipse(x + 13, y + 21, 4.5, 3.5, -0.4, 0, Math.PI * 2); g.fill(); g.fillRect(x + 16.5, y + 8, 2, 13); g.fillRect(x + 16.5, y + 8, 7, 2.5);
+        g.globalAlpha = 1;
+      } else {
+        g.setLineDash([3, 4]); g.strokeStyle = col; g.lineWidth = 1.5; g.strokeRect(x + 2.5, y + 2.5, TILE - 5, TILE - 5); g.setLineDash([]);
+      }
+    });
     // ice: solid until an ember player pushes into it
     W.ice.forEach(ic => {
       if (isMelted(S, ic.tx, ic.ty)) return;
@@ -1012,7 +1041,11 @@ function stepWorld(W, s, inputs) {
   function drawWall(tx, ty, x, y) {
     g.fillStyle = C.ink; g.fillRect(x, y, TILE, TILE);
     const open = (dx, dy) => { const yy = ty + dy, xx = tx + dx; return yy >= 0 && yy < W.h && xx >= 0 && xx < W.w && W.map[yy][xx] !== "#"; };
-    if (open(0, -1)) { g.fillStyle = C["ink-soft"]; g.fillRect(x, y, TILE, 4); }
+    if (open(0, -1)) {
+      const grass = LEVELS[levelIdx].theme === "isles";
+      g.fillStyle = grass ? C.grass : C["ink-soft"]; g.fillRect(x, y, TILE, grass ? 5 : 4);
+      if (grass) for (let k = 3; k < TILE; k += 7) g.fillRect(x + k, y - 3, 2, 3);
+    }
     g.strokeStyle = "rgba(255,255,255,0.07)"; g.lineWidth = 1;
     g.beginPath(); g.moveTo(x + 4, y + TILE - 4); g.lineTo(x + TILE - 4, y + 4); g.stroke();
   }
