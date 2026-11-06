@@ -1,0 +1,798 @@
+<title>New World</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Atkinson+Hyperlegible:wght@400;700&family=Kalam:wght@400;700&display=swap">
+<style>
+/* Layout: one notebook page. The level is the drawing at the top; the next turn's notes sit under it; the world's history sits last. */
+:root {
+  --paper: #eef1ef;
+  --paper-deep: #e2e7e4;
+  --grid: #d3e1e2;
+  --ink: #23313c;
+  --ink-soft: #5d6c76;
+  --p1: #d4456f;
+  --p2: #2d77c4;
+  --gold: #d99a17;
+  --hazard: #c13a2a;
+  --display: "Young Serif", Georgia, "Times New Roman", serif;
+  --body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --hand: "Kalam", "Comic Sans MS", "Bradley Hand", cursive;
+  color-scheme: light;
+}
+[hidden] { display: none !important; }
+html, body { background: var(--paper); color: var(--ink); }
+body {
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+}
+.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 28px; }
+
+/* masthead */
+.mast { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 20px; }
+.mast h1 { font-family: var(--display); font-weight: 400; font-size: clamp(34px, 6vw, 54px); line-height: 1; margin: 0; letter-spacing: -0.01em; }
+.mast h1 .and { color: var(--p1); }
+.mast h1 .w { color: var(--p2); }
+.mast p { margin: 6px 0 0; color: var(--ink-soft); max-width: 46ch; }
+.chip { font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--ink-soft); color: var(--ink-soft); background: var(--paper); white-space: nowrap; }
+.chip.ok { border-color: #3a7d55; color: #2e6a47; }
+.chip.warn { border-color: var(--gold); color: #8a5f06; }
+
+/* stage */
+.stage { display: grid; gap: 10px; }
+.hud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; font-variant-numeric: tabular-nums; }
+.hud .lvl { font-family: var(--display); font-size: 22px; }
+.hud .stat { color: var(--ink-soft); font-size: 14px; }
+.hud .grow { flex: 1; }
+.screen { position: relative; border: 2px solid var(--ink); border-radius: 4px; background: var(--paper); box-shadow: 4px 4px 0 var(--ink); overflow: hidden; }
+canvas { display: block; width: 100%; height: auto; aspect-ratio: 960 / 544; max-width: 100%; image-rendering: auto; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--paper) 86%, transparent); padding: 16px; }
+.card { max-width: 520px; width: 100%; display: grid; gap: 12px; text-align: left; }
+.card h2 { font-family: var(--display); font-weight: 400; font-size: clamp(24px, 4vw, 34px); line-height: 1.1; margin: 0; text-wrap: balance; }
+.eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+.asked { display: grid; gap: 6px; }
+.said { font-family: var(--hand); font-size: 18px; line-height: 1.35; padding-left: 12px; border-left: 3px solid var(--who, var(--ink-soft)); }
+.said b { font-family: var(--body); font-size: 13px; font-weight: 700; color: var(--who); display: block; letter-spacing: 0.04em; }
+.built { color: var(--ink-soft); font-size: 15px; margin: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+button { font: inherit; font-weight: 700; font-size: 15px; cursor: pointer; border-radius: 6px; padding: 9px 16px; border: 2px solid var(--ink); background: var(--ink); color: var(--paper); }
+button.ghost { background: transparent; color: var(--ink); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.hint { font-size: 13px; color: var(--ink-soft); }
+
+.keys { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14px; color: var(--ink-soft); }
+.keys span b { color: var(--ink); }
+kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px solid var(--ink-soft); border-bottom-width: 3px; border-radius: 4px; padding: 0 5px; color: var(--ink); background: var(--paper); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: 0; }
+
+/* the turn */
+.round { display: grid; gap: 16px; padding: 22px; border: 2px solid var(--ink); border-radius: 4px; background: var(--paper); }
+.round header { display: grid; gap: 4px; }
+.round h2 { font-family: var(--display); font-weight: 400; font-size: 28px; margin: 0; }
+.round header p { margin: 0; color: var(--ink-soft); max-width: 62ch; }
+.names { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+.names label { display: grid; gap: 2px; font-size: 13px; font-weight: 700; color: var(--who); }
+.names input { font: inherit; font-size: 15px; padding: 6px 8px; border: 1.5px solid var(--ink-soft); border-radius: 4px; background: var(--paper); color: var(--ink); width: 180px; max-width: 100%; }
+.turns { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 680px) { .turns { grid-template-columns: 1fr; } }
+.turn { display: grid; gap: 8px; padding: 14px; border-radius: 4px; border: 1.5px dashed var(--who); min-width: 0; background: color-mix(in srgb, var(--who) 5%, var(--paper)); }
+.turn.locked { border-style: solid; }
+.turn.wait { opacity: 0.55; }
+.turn .who { font-weight: 700; color: var(--who); font-size: 14px; letter-spacing: 0.04em; display: flex; justify-content: space-between; gap: 8px; }
+.turn textarea { font-family: var(--hand); font-size: 19px; line-height: 1.35; min-height: 110px; resize: vertical; padding: 8px 10px; border-radius: 4px; border: 1.5px solid var(--ink-soft); background: var(--paper); color: var(--ink); width: 100%; box-sizing: border-box; }
+.turn .final { font-family: var(--hand); font-size: 19px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.4em; }
+.send { display: grid; gap: 8px; padding-top: 4px; }
+.waiting { display: grid; gap: 6px; padding: 14px; border-radius: 4px; background: var(--paper-deep); }
+.waiting strong { font-family: var(--display); font-weight: 400; font-size: 20px; }
+.waiting code { font-family: var(--body); font-weight: 700; background: var(--paper); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--ink-soft); }
+.p1 { --who: var(--p1); }
+.p2 { --who: var(--p2); }
+
+/* history */
+.book { display: grid; gap: 12px; }
+.book h2 { font-family: var(--display); font-weight: 400; font-size: 26px; margin: 0; }
+.pages { display: grid; gap: 10px; }
+.page { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 16px; align-items: start; padding: 12px 0; border-top: 1.5px solid var(--grid); }
+.page .num { font-family: var(--display); font-size: 30px; line-height: 1; min-width: 1.4em; color: var(--ink-soft); }
+.page .meta { display: grid; gap: 6px; min-width: 0; }
+.page .meta h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 19px; }
+.page .meta .built { font-size: 14px; }
+.page .meta .said { font-size: 16px; }
+.page.current .num { color: var(--ink); }
+.tick { font-size: 13px; color: #2e6a47; font-weight: 700; }
+@media (max-width: 520px) { .page { grid-template-columns: auto 1fr; } .page button { grid-column: 2; justify-self: start; } }
+
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+  <header class="mast">
+    <div>
+      <h1>New <span class="w">World</span></h1>
+      <p>A game you two write as you play. Clear a level together, each add one change, and Claude builds the next one.</p>
+    </div>
+    <span class="chip" id="sync">Connecting…</span>
+  </header>
+
+  <section class="stage" aria-label="Game">
+    <div class="hud">
+      <span class="lvl" id="hudLevel">Level 1</span>
+      <span class="stat" id="hudGems">Stars 0/0</span>
+      <span class="stat" id="hudFalls">Falls 0</span>
+      <span class="grow"></span>
+      <button class="ghost" id="regroupBtn" type="button" title="Both players back to the start (R)">Regroup <kbd>R</kbd></button>
+    </div>
+    <div class="screen">
+      <canvas id="cv" width="960" height="544" aria-label="The level"></canvas>
+      <div class="overlay" id="ovStart">
+        <div class="card">
+          <span class="eyebrow" id="startEyebrow">Level 1</span>
+          <h2 id="startTitle">First Draft</h2>
+          <div class="asked" id="startAsked"></div>
+          <p class="built" id="startBuilt"></p>
+          <div class="row"><button id="startBtn" type="button">Start level</button><span class="hint">or press <kbd>Enter</kbd></span></div>
+        </div>
+      </div>
+      <div class="overlay" id="ovWin" hidden>
+        <div class="card">
+          <span class="eyebrow">Cleared together</span>
+          <h2 id="winTitle">Level 1 done</h2>
+          <p class="built" id="winStats"></p>
+          <div class="row"><button id="toRoundBtn" type="button">Write the next level</button><button class="ghost" id="againBtn" type="button">Play it again</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="keys">
+      <span class="p1"><i class="dot" style="background:var(--p1)"></i><b id="keyName1">Player 1</b>: <kbd>A</kbd> <kbd>D</kbd> move, <kbd>W</kbd> jump</span>
+      <span class="p2"><i class="dot" style="background:var(--p2)"></i><b id="keyName2">Player 2</b>: <kbd>←</kbd> <kbd>→</kbd> move, <kbd>↑</kbd> jump</span>
+      <span>Stand on each other's heads. Both of you need to reach the gold door.</span>
+    </div>
+  </section>
+
+  <section class="round" id="round" aria-labelledby="roundTitle">
+    <header>
+      <span class="eyebrow">Your turns</span>
+      <h2 id="roundTitle">Write Level 2</h2>
+      <p>Take turns. Each of you writes one thing to add or change, like a new move, a hazard, a theme, a rule, or a story beat. When both are locked in, send them to Claude, who builds the next level from them.</p>
+    </header>
+    <div class="names">
+      <label class="p1" for="name1">Player 1 (WASD)<input id="name1" maxlength="24" autocomplete="off"></label>
+      <label class="p2" for="name2">Player 2 (arrows)<input id="name2" maxlength="24" autocomplete="off"></label>
+    </div>
+    <div class="turns">
+      <div class="turn p1" id="turn1">
+        <div class="who"><span id="turnName1">Player 1</span><span id="turnState1">Turn 1</span></div>
+        <textarea id="text1" maxlength="600" placeholder="e.g. Add a double jump, and make the floor lava in one spot"></textarea>
+        <div class="final" id="final1" hidden></div>
+        <div class="row"><button id="lock1" type="button">Lock it in</button><button class="ghost" id="edit1" type="button" hidden>Change it</button></div>
+      </div>
+      <div class="turn p2" id="turn2">
+        <div class="who"><span id="turnName2">Player 2</span><span id="turnState2">Turn 2</span></div>
+        <textarea id="text2" maxlength="600" placeholder="e.g. Make it nighttime, with a key one of us has to carry"></textarea>
+        <div class="final" id="final2" hidden></div>
+        <div class="row"><button id="lock2" type="button">Lock it in</button><button class="ghost" id="edit2" type="button" hidden>Change it</button></div>
+      </div>
+    </div>
+    <div class="send" id="sendBox">
+      <div class="row"><button id="sendBtn" type="button" disabled>Send to Claude</button><span class="hint" id="sendHint">Both turns need to be locked in first.</span></div>
+    </div>
+    <div class="waiting" id="waitBox" hidden>
+      <strong id="waitTitle">Sent. Claude is up next.</strong>
+      <span>In your Claude session, say <code>build the next level</code>. This page updates by itself when the level is ready.</span>
+      <div class="row"><button class="ghost" id="unsendBtn" type="button">Take it back</button><button class="ghost" id="copyBtn" type="button">Copy turns</button></div>
+    </div>
+  </section>
+
+  <section class="book" aria-labelledby="bookTitle">
+    <h2 id="bookTitle">The world so far</h2>
+    <div class="pages" id="pages"></div>
+  </section>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────
+// LEVELS. Claude appends one entry per round. Map legend:
+//   # wall   ^ spikes   g gate   p pressure plate   l lever (latches gates open)
+//   * star   E gold door   1 / 2 player starts   . air
+// testPlan is what tools/playtest.js checks before a level ships.
+// ─────────────────────────────────────────────────────────────────────
+const LEVELS = [
+  {
+    n: 1,
+    name: "First Draft",
+    asked: null,
+    built: "Claude drew the first page: two rooms split by a gate only teamwork opens, and a gold door you both have to reach.",
+    rules: {},
+    map: [
+      "##############################",
+      "#...................#........#",
+      "#...................#........#",
+      "#...................#........#",
+      "#...................#........#",
+      "#.........*.........#......E.#",
+      "#........###........#....#####",
+      "#...................#........#",
+      "#.............*.....#..*.....#",
+      "#............###....#.###....#",
+      "#...................#........#",
+      "#..........*........#........#",
+      "#.........###.......g....###.#",
+      "#...................g........#",
+      "#.12.............p..g.l......#",
+      "######^^###############^^#####",
+      "##############################"
+    ],
+    testPlan: [
+      { mover: 0, to: "l", expect: "unreachable", note: "the gate really blocks one player alone" },
+      { mover: 0, to: "p", note: "player 1 reaches the plate" },
+      { mover: 1, to: "l", note: "player 2 gets through and flips the lever" },
+      { mover: 0, to: "E", note: "player 1 reaches the door" },
+      { mover: 1, to: "E", note: "player 2 reaches the door" }
+    ]
+  }
+];
+</script>
+
+<script id="sim">
+// SIM-START: pure simulation, no DOM. tools/playtest.js runs this exact code.
+const TILE = 32, PW = 20, PH = 26;
+const PHYS = { grav: 0.55, maxFall: 12, accel: 0.6, airAccel: 0.45, friction: 0.72, maxRun: 3.6, jumpVel: 11, jumpCut: 3.5, coyote: 5 };
+
+function buildWorld(level) {
+  const map = level.map, h = map.length, w = map[0].length;
+  const W = { w, h, map, rules: Object.assign({}, PHYS, level.rules || {}), spawns: [], gems: [], plates: [], levers: [], exits: [], gates: [], spikes: [] };
+  for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
+    const c = map[ty][tx];
+    if (c === "1" || c === "2") W.spawns[+c - 1] = { x: tx * TILE + (TILE - PW) / 2, y: (ty + 1) * TILE - PH };
+    else if (c === "*") W.gems.push({ tx, ty });
+    else if (c === "p") W.plates.push({ tx, ty });
+    else if (c === "l") W.levers.push({ tx, ty });
+    else if (c === "E") W.exits.push({ tx, ty });
+    else if (c === "g") W.gates.push({ tx, ty });
+    else if (c === "^") W.spikes.push({ tx, ty });
+  }
+  return W;
+}
+
+function newState(W) {
+  return {
+    t: 0, won: false, latched: false, plateDown: false, gateOpen: false, falls: 0,
+    gems: W.gems.map(() => false), events: [],
+    players: W.spawns.map(s => ({ x: s.x, y: s.y, vx: 0, vy: 0, ground: false, coyote: 0, jumpLock: false, face: 1 }))
+  };
+}
+
+function cloneState(s) {
+  return {
+    t: s.t, won: s.won, latched: s.latched, plateDown: s.plateDown, gateOpen: s.gateOpen, falls: s.falls,
+    gems: s.gems.slice(), events: [],
+    players: s.players.map(p => ({ x: p.x, y: p.y, vx: p.vx, vy: p.vy, ground: p.ground, coyote: p.coyote, jumpLock: p.jumpLock, face: p.face }))
+  };
+}
+
+function overlap(ax, ay, aw, ah, bx, by, bw, bh) { return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by; }
+
+// Trigger areas, shared by the sim, the renderer and the playtest.
+function area(kind, t) {
+  const x = t.tx * TILE, y = t.ty * TILE;
+  if (kind === "p") return [x + 2, y + TILE - 8, TILE - 4, 8];
+  if (kind === "l") return [x + 4, y + 6, TILE - 8, TILE - 6];
+  if (kind === "E") return [x + 2, y - TILE + 4, TILE - 4, TILE * 2 - 4];
+  if (kind === "^") return [x + 4, y + 16, TILE - 8, TILE - 16];
+  if (kind === "*") return [x + 8, y + 8, TILE - 16, TILE - 16];
+  return [x, y, TILE, TILE];
+}
+const KIND_LIST = { p: "plates", l: "levers", E: "exits", "^": "spikes", "*": "gems", g: "gates" };
+function touches(W, p, kind) {
+  for (const t of W[KIND_LIST[kind]]) { const a = area(kind, t); if (overlap(p.x, p.y, PW, PH, a[0], a[1], a[2], a[3])) return true; }
+  return false;
+}
+
+function solidAt(W, s, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= W.w || ty >= W.h) return true;
+  const c = W.map[ty][tx];
+  if (c === "#") return true;
+  if (c === "g") return !s.gateOpen;
+  return false;
+}
+
+function moveX(W, s, p) {
+  p.x += p.vx;
+  const top = Math.floor(p.y / TILE), bot = Math.floor((p.y + PH - 0.01) / TILE);
+  if (p.vx > 0) {
+    const tx = Math.floor((p.x + PW - 0.01) / TILE);
+    for (let ty = top; ty <= bot; ty++) if (solidAt(W, s, tx, ty)) { p.x = tx * TILE - PW; p.vx = 0; break; }
+  } else if (p.vx < 0) {
+    const tx = Math.floor(p.x / TILE);
+    for (let ty = top; ty <= bot; ty++) if (solidAt(W, s, tx, ty)) { p.x = (tx + 1) * TILE; p.vx = 0; break; }
+  }
+}
+
+function moveY(W, s, p, i) {
+  const prevBottom = p.y + PH;
+  p.y += p.vy;
+  p.ground = false;
+  const left = Math.floor(p.x / TILE), right = Math.floor((p.x + PW - 0.01) / TILE);
+  if (p.vy > 0) {
+    const ty = Math.floor((p.y + PH - 0.01) / TILE);
+    for (let tx = left; tx <= right; tx++) if (solidAt(W, s, tx, ty)) {
+      if (p.vy > 6) s.events.push({ type: "land", i, x: p.x + PW / 2, y: ty * TILE });
+      p.y = ty * TILE - PH; p.vy = 0; p.ground = true; break;
+    }
+    if (!p.ground) {
+      // land on your partner's head
+      s.players.forEach((q, j) => {
+        if (j === i || p.ground) return;
+        if (p.x < q.x + PW - 2 && p.x + PW > q.x + 2 && prevBottom <= q.y + 0.01 && p.y + PH >= q.y) {
+          p.y = q.y - PH; p.vy = 0; p.ground = true;
+        }
+      });
+    }
+  } else if (p.vy < 0) {
+    const ty = Math.floor(p.y / TILE);
+    for (let tx = left; tx <= right; tx++) if (solidAt(W, s, tx, ty)) { p.y = (ty + 1) * TILE; p.vy = 0; break; }
+  }
+}
+
+function respawn(W, s, i) {
+  const p = s.players[i], sp = W.spawns[i];
+  p.x = sp.x; p.y = sp.y; p.vx = 0; p.vy = 0; p.ground = false; p.coyote = 0;
+}
+
+function regroup(W, s) { s.players.forEach((_, i) => respawn(W, s, i)); s.events.push({ type: "regroup" }); }
+
+function updateTriggers(W, s) {
+  s.plateDown = s.players.some(p => touches(W, p, "p"));
+  const inGate = s.players.some(p => touches(W, p, "g"));
+  s.gateOpen = s.latched || s.plateDown || (s.gateOpen && inGate);
+}
+
+// inputs: [{left,right,jump}, {left,right,jump}]
+function stepWorld(W, s, inputs) {
+  if (s.won) return s;
+  const r = W.rules;
+  s.t++;
+  updateTriggers(W, s);
+  s.players.forEach((p, i) => {
+    const inp = inputs[i] || {};
+    const ax = (inp.right ? 1 : 0) - (inp.left ? 1 : 0);
+    if (ax) { p.vx += ax * (p.ground ? r.accel : r.airAccel); p.face = ax; }
+    else p.vx *= p.ground ? r.friction : 0.94;
+    if (p.vx > r.maxRun) p.vx = r.maxRun; else if (p.vx < -r.maxRun) p.vx = -r.maxRun;
+    if (Math.abs(p.vx) < 0.05) p.vx = 0;
+    if (inp.jump && !p.jumpLock && (p.ground || p.coyote > 0)) {
+      p.vy = -r.jumpVel; p.ground = false; p.coyote = 0; p.jumpLock = true;
+      s.events.push({ type: "jump", i, x: p.x + PW / 2, y: p.y + PH });
+    }
+    if (!inp.jump) { p.jumpLock = false; if (p.vy < -r.jumpCut) p.vy = -r.jumpCut; }
+    p.vy = Math.min(p.vy + r.grav, r.maxFall);
+    moveX(W, s, p);
+    moveY(W, s, p, i);
+    p.coyote = p.ground ? r.coyote : Math.max(0, p.coyote - 1);
+
+    if (touches(W, p, "^")) { s.events.push({ type: "fall", i, x: p.x + PW / 2, y: p.y + PH / 2 }); s.falls++; respawn(W, s, i); return; }
+    W.gems.forEach((g, k) => {
+      if (s.gems[k]) return;
+      const a = area("*", g);
+      if (overlap(p.x, p.y, PW, PH, a[0], a[1], a[2], a[3])) { s.gems[k] = true; s.events.push({ type: "star", i, x: a[0] + a[2] / 2, y: a[1] + a[3] / 2 }); }
+    });
+    if (!s.latched && touches(W, p, "l")) { s.latched = true; s.events.push({ type: "lever", i }); }
+  });
+  updateTriggers(W, s);
+  if (s.players.length && s.players.every(p => touches(W, p, "E"))) { s.won = true; s.events.push({ type: "win" }); }
+  return s;
+}
+// SIM-END
+</script>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem("nw:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem("nw:" + k, JSON.stringify(v)); } catch (e) {} }
+  };
+
+  // ── colors from tokens, so the canvas follows the CSS ──
+  const css = getComputedStyle(document.documentElement);
+  const C = {};
+  ["paper", "paper-deep", "grid", "ink", "ink-soft", "p1", "p2", "gold", "hazard"].forEach(k => C[k] = css.getPropertyValue("--" + k).trim());
+
+  // ── state ──
+  let names = { p1: "Player 1", p2: "Player 2" };
+  let levelIdx = LEVELS.length - 1;
+  let W, S, mode = "start";
+  const fx = [];
+  let cleared = store.get("cleared", {});
+
+  function loadLevel(idx) {
+    levelIdx = idx;
+    W = buildWorld(LEVELS[idx]);
+    S = newState(W);
+    fx.length = 0;
+    mode = "start";
+    showStart();
+    renderHud();
+    renderBook();
+  }
+
+  // ── input ──
+  const keys = new Set();
+  const KEYMAP = [
+    { left: ["KeyA"], right: ["KeyD"], jump: ["KeyW"] },
+    { left: ["ArrowLeft"], right: ["ArrowRight"], jump: ["ArrowUp"] }
+  ];
+  const GAME_KEYS = new Set(["KeyA", "KeyD", "KeyW", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space", "KeyR", "Enter"]);
+  const typing = el => el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT");
+  addEventListener("keydown", e => {
+    if (typing(e.target)) return;
+    if (!GAME_KEYS.has(e.code)) return;
+    if (e.code === "Enter" && e.target && e.target.tagName === "BUTTON") return;
+    if (mode === "playing" || e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
+    keys.add(e.code);
+    if (e.code === "KeyR" && mode === "playing") regroup(W, S);
+    if (e.code === "Enter" && mode === "start") { e.preventDefault(); begin(); }
+  });
+  addEventListener("keyup", e => keys.delete(e.code));
+  addEventListener("blur", () => keys.clear());
+  const held = list => list.some(k => keys.has(k));
+  const inputFor = i => ({ left: held(KEYMAP[i].left), right: held(KEYMAP[i].right), jump: held(KEYMAP[i].jump) });
+
+  function begin() { mode = "playing"; $("ovStart").hidden = true; $("ovWin").hidden = true; keys.clear(); $("cv").focus?.(); }
+
+  // ── loop ──
+  const STEP = 1000 / 60;
+  let acc = 0, last = performance.now();
+  function frame(now) {
+    acc += Math.min(now - last, 100); last = now;
+    while (acc >= STEP) {
+      if (mode === "playing") {
+        stepWorld(W, S, [inputFor(0), inputFor(1)]);
+        handleEvents();
+        if (S.won) win();
+      }
+      acc -= STEP;
+    }
+    draw(now);
+    requestAnimationFrame(frame);
+  }
+
+  function handleEvents() {
+    let hudDirty = false;
+    for (const ev of S.events) {
+      const col = ev.i === 1 ? C.p2 : C.p1;
+      if (ev.type === "jump") puff(ev.x, ev.y, col, 5, 1.2);
+      else if (ev.type === "land") puff(ev.x, ev.y, C["ink-soft"], 6, 1.5);
+      else if (ev.type === "fall") { puff(ev.x, ev.y, C.hazard, 16, 3); hudDirty = true; }
+      else if (ev.type === "star") { puff(ev.x, ev.y, C.gold, 14, 2.5); hudDirty = true; }
+      else if (ev.type === "lever") puff(W.levers[0].tx * TILE + 16, W.levers[0].ty * TILE + 16, C.gold, 12, 2);
+    }
+    S.events.length = 0;
+    if (hudDirty) renderHud();
+  }
+
+  function puff(x, y, color, n, speed) {
+    for (let k = 0; k < n; k++) {
+      const a = Math.random() * Math.PI * 2, v = Math.random() * speed + 0.4;
+      fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.6, life: 26 + Math.random() * 14, color });
+    }
+  }
+
+  function win() {
+    mode = "won";
+    cleared[LEVELS[levelIdx].n] = true; store.set("cleared", cleared);
+    const got = S.gems.filter(Boolean).length;
+    $("winTitle").textContent = `Level ${LEVELS[levelIdx].n} done`;
+    $("winStats").textContent = `${got} of ${S.gems.length} stars, ${S.falls} ${S.falls === 1 ? "fall" : "falls"}, ${Math.round(S.t / 60)} seconds.`;
+    $("toRoundBtn").hidden = levelIdx !== LEVELS.length - 1;
+    $("ovWin").hidden = false;
+    renderBook();
+  }
+
+  // ── drawing ──
+  const cv = $("cv"), g = cv.getContext("2d");
+  function draw(now) {
+    const t = now / 1000;
+    g.fillStyle = C.paper; g.fillRect(0, 0, 960, 544);
+    g.strokeStyle = C.grid; g.lineWidth = 1;
+    g.beginPath();
+    for (let x = 0; x <= 960; x += TILE) { g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, 544); }
+    for (let y = 0; y <= 544; y += TILE) { g.moveTo(0, y + 0.5); g.lineTo(960, y + 0.5); }
+    g.stroke();
+
+    for (let ty = 0; ty < W.h; ty++) for (let tx = 0; tx < W.w; tx++) {
+      const c = W.map[ty][tx], x = tx * TILE, y = ty * TILE;
+      if (c === "#") drawWall(tx, ty, x, y);
+    }
+    // gates
+    W.gates.forEach(gt => {
+      const x = gt.tx * TILE, y = gt.ty * TILE;
+      if (S.gateOpen) {
+        g.setLineDash([4, 4]); g.strokeStyle = C["ink-soft"]; g.lineWidth = 1.5;
+        g.strokeRect(x + 4.5, y + 0.5, TILE - 9, TILE - 1); g.setLineDash([]);
+      } else {
+        g.fillStyle = C.ink;
+        for (let k = 0; k < 4; k++) g.fillRect(x + 4 + k * 7, y, 3, TILE);
+        g.fillRect(x + 2, y + 13, TILE - 4, 3);
+      }
+    });
+    // spikes
+    W.spikes.forEach(sp => {
+      const x = sp.tx * TILE, y = sp.ty * TILE;
+      g.fillStyle = C.hazard;
+      g.beginPath();
+      for (let k = 0; k < 4; k++) { g.moveTo(x + k * 8, y + TILE); g.lineTo(x + k * 8 + 4, y + 14); g.lineTo(x + k * 8 + 8, y + TILE); }
+      g.fill();
+    });
+    // plates
+    W.plates.forEach(pl => {
+      const x = pl.tx * TILE, y = pl.ty * TILE, down = S.plateDown;
+      g.fillStyle = C.ink; g.fillRect(x + 1, y + TILE - 3, TILE - 2, 3);
+      g.fillStyle = down ? C.gold : C["ink-soft"]; g.fillRect(x + 4, y + TILE - (down ? 5 : 9), TILE - 8, down ? 2 : 6);
+    });
+    // levers
+    W.levers.forEach(lv => {
+      const x = lv.tx * TILE + 16, y = lv.ty * TILE + TILE;
+      g.fillStyle = C.ink; g.fillRect(x - 9, y - 6, 18, 6);
+      const ang = S.latched ? 0.7 : -0.7;
+      g.strokeStyle = C.ink; g.lineWidth = 3; g.lineCap = "round";
+      g.beginPath(); g.moveTo(x, y - 5); g.lineTo(x + Math.sin(ang) * 20, y - 5 - Math.cos(ang) * 20); g.stroke();
+      g.fillStyle = S.latched ? C.gold : C.hazard;
+      g.beginPath(); g.arc(x + Math.sin(ang) * 20, y - 5 - Math.cos(ang) * 20, 4.5, 0, Math.PI * 2); g.fill();
+    });
+    // exit door
+    W.exits.forEach(ex => {
+      const x = ex.tx * TILE, y = ex.ty * TILE - TILE;
+      const inside = S.players.filter(p => touches(W, p, "E")).length;
+      g.fillStyle = inside ? C.gold : C.paper;
+      g.strokeStyle = C.gold; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(x + 3, y + 2 * TILE); g.lineTo(x + 3, y + 14); g.arc(x + 16, y + 14, 13, Math.PI, 0); g.lineTo(x + 29, y + 2 * TILE); g.closePath();
+      g.globalAlpha = inside ? 0.35 + inside * 0.25 : 1; g.fill(); g.globalAlpha = 1; g.stroke();
+      g.fillStyle = C.gold; g.beginPath(); g.arc(x + 23, y + 38, 2.2, 0, Math.PI * 2); g.fill();
+    });
+    // stars
+    W.gems.forEach((gm, k) => {
+      if (S.gems[k]) return;
+      const cx = gm.tx * TILE + 16, cy = gm.ty * TILE + 16 + Math.sin(t * 2.4 + k) * 2.5;
+      star(cx, cy, 8, 3.4, C.gold);
+    });
+    // players
+    S.players.forEach((p, i) => drawPlayer(p, i, t));
+    // particles
+    for (let k = fx.length - 1; k >= 0; k--) {
+      const f = fx[k];
+      f.x += f.vx; f.y += f.vy; f.vy += 0.08; f.life--;
+      if (f.life <= 0) { fx.splice(k, 1); continue; }
+      g.globalAlpha = Math.min(1, f.life / 20); g.fillStyle = f.color;
+      g.fillRect(f.x - 1.5, f.y - 1.5, 3, 3);
+    }
+    g.globalAlpha = 1;
+  }
+
+  function drawWall(tx, ty, x, y) {
+    g.fillStyle = C.ink; g.fillRect(x, y, TILE, TILE);
+    const open = (dx, dy) => { const yy = ty + dy, xx = tx + dx; return yy >= 0 && yy < W.h && xx >= 0 && xx < W.w && W.map[yy][xx] !== "#"; };
+    if (open(0, -1)) { g.fillStyle = C["ink-soft"]; g.fillRect(x, y, TILE, 4); }
+    g.strokeStyle = "rgba(255,255,255,0.07)"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x + 4, y + TILE - 4); g.lineTo(x + TILE - 4, y + 4); g.stroke();
+  }
+
+  function star(cx, cy, R, r, color) {
+    g.fillStyle = color; g.beginPath();
+    for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 - Math.PI / 2, rr = k % 2 ? r : R; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    g.closePath(); g.fill();
+  }
+
+  function drawPlayer(p, i, t) {
+    const col = i ? C.p2 : C.p1;
+    const stretch = p.ground ? 0 : Math.max(-3, Math.min(3, -p.vy * 0.35));
+    const w = PW - stretch * 0.6, h = PH + stretch;
+    const x = p.x + (PW - w) / 2, y = p.y + PH - h;
+    g.fillStyle = col;
+    roundRect(x, y, w, h, 6); g.fill();
+    g.fillStyle = C.paper;
+    const ex = x + w / 2 + p.face * 3, ey = y + 9;
+    g.fillRect(ex - 5, ey - 3, 4, 6); g.fillRect(ex + 1, ey - 3, 4, 6);
+    g.fillStyle = C.ink;
+    g.fillRect(ex - 4 + p.face, ey - 1, 2, 3); g.fillRect(ex + 2 + p.face, ey - 1, 2, 3);
+    // name tag initial
+    g.fillStyle = col; g.font = "700 11px " + getComputedStyle(document.body).fontFamily;
+    g.textAlign = "center";
+    g.fillText((i ? names.p2 : names.p1).slice(0, 1).toUpperCase(), p.x + PW / 2, p.y - 5);
+  }
+  function roundRect(x, y, w, h, r) {
+    g.beginPath(); g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath();
+  }
+
+  // ── HUD, overlays, book ──
+  function renderHud() {
+    const L = LEVELS[levelIdx];
+    $("hudLevel").textContent = `Level ${L.n} · ${L.name}`;
+    $("hudGems").textContent = `Stars ${S.gems.filter(Boolean).length}/${S.gems.length}`;
+    $("hudFalls").textContent = `Falls ${S.falls}`;
+  }
+
+  function saidBlock(asked) {
+    const box = document.createElement("div"); box.className = "asked";
+    if (!asked) return box;
+    [["p1", asked.p1], ["p2", asked.p2]].forEach(([k, a]) => {
+      if (!a || !a.text) return;
+      const d = document.createElement("div"); d.className = "said " + k;
+      const b = document.createElement("b"); b.textContent = (a.name || (k === "p1" ? names.p1 : names.p2)) + " asked";
+      d.append(b, document.createTextNode(a.text));
+      box.append(d);
+    });
+    return box;
+  }
+
+  function showStart() {
+    const L = LEVELS[levelIdx];
+    $("startEyebrow").textContent = `Level ${L.n}`;
+    $("startTitle").textContent = L.name;
+    $("startAsked").replaceWith(Object.assign(saidBlock(L.asked), { id: "startAsked" }));
+    $("startBuilt").textContent = L.built || "";
+    $("ovStart").hidden = false; $("ovWin").hidden = true;
+  }
+
+  function renderBook() {
+    const box = $("pages"); box.textContent = "";
+    LEVELS.slice().reverse().forEach(L => {
+      const idx = LEVELS.indexOf(L);
+      const row = document.createElement("article"); row.className = "page" + (idx === levelIdx ? " current" : "");
+      const num = document.createElement("div"); num.className = "num"; num.textContent = L.n;
+      const meta = document.createElement("div"); meta.className = "meta";
+      const h = document.createElement("h3"); h.textContent = L.name;
+      meta.append(h);
+      if (cleared[L.n]) { const tk = document.createElement("span"); tk.className = "tick"; tk.textContent = "Cleared"; meta.append(tk); }
+      meta.append(saidBlock(L.asked));
+      const b = document.createElement("p"); b.className = "built"; b.textContent = L.built; meta.append(b);
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "ghost";
+      btn.textContent = idx === levelIdx ? "Playing" : "Play"; btn.disabled = idx === levelIdx;
+      btn.addEventListener("click", () => { loadLevel(idx); $("cv").scrollIntoView({ block: "center", behavior: "smooth" }); });
+      row.append(num, meta, btn);
+      box.append(row);
+    });
+  }
+
+  $("startBtn").addEventListener("click", begin);
+  $("againBtn").addEventListener("click", () => loadLevel(levelIdx));
+  $("toRoundBtn").addEventListener("click", () => { $("round").scrollIntoView({ behavior: "smooth", block: "start" }); setTimeout(() => (round.p1Locked ? $("text2") : $("text1")).focus({ preventScroll: true }), 400); });
+  $("regroupBtn").addEventListener("click", () => { if (mode === "playing") regroup(W, S); });
+
+  // ── turns: shared through the artifact's database, so Claude can read them ──
+  const NEXT = LEVELS[LEVELS.length - 1].n + 1;
+  const ROUND_PATH = "rounds/level-" + NEXT;
+  let db = null, roundRef = null, namesRef = null;
+  let round = store.get("round-" + NEXT, { level: NEXT, p1: "", p2: "", p1Locked: false, p2Locked: false, status: "drafting" });
+  let writing = Promise.resolve();
+
+  function setSync(kind, text) { const el = $("sync"); el.className = "chip " + (kind || ""); el.textContent = text; }
+
+  function renderNames() {
+    $("keyName1").textContent = names.p1; $("keyName2").textContent = names.p2;
+    $("turnName1").textContent = names.p1; $("turnName2").textContent = names.p2;
+    if (document.activeElement !== $("name1")) $("name1").value = names.p1;
+    if (document.activeElement !== $("name2")) $("name2").value = names.p2;
+  }
+
+  function renderRound() {
+    $("roundTitle").textContent = `Write Level ${NEXT}`;
+    const sent = round.status === "ready" || round.status === "built";
+    [1, 2].forEach(n => {
+      const locked = round["p" + n + "Locked"];
+      const mine = n === 1 ? !locked : round.p1Locked && !locked;
+      const ta = $("text" + n), fin = $("final" + n);
+      $("turn" + n).classList.toggle("locked", locked);
+      $("turn" + n).classList.toggle("wait", n === 2 && !round.p1Locked);
+      ta.hidden = locked; fin.hidden = !locked;
+      fin.textContent = round["p" + n];
+      if (document.activeElement !== ta && !locked) ta.value = round["p" + n] || ta.value;
+      ta.disabled = n === 2 && !round.p1Locked;
+      $("lock" + n).hidden = locked; $("lock" + n).disabled = (n === 2 && !round.p1Locked);
+      $("edit" + n).hidden = !locked || sent;
+      $("turnState" + n).textContent = locked ? "Locked in" : mine ? "Your turn" : "Waiting";
+    });
+    const both = round.p1Locked && round.p2Locked;
+    $("sendBox").hidden = sent;
+    $("waitBox").hidden = !sent;
+    $("sendBtn").disabled = !both;
+    $("sendHint").textContent = both ? "Claude reads both and builds the next level." : "Both turns need to be locked in first.";
+    $("waitTitle").textContent = round.status === "built" ? `Level ${NEXT} is built. Reload to play it.` : "Sent. Claude is up next.";
+    $("copyBtn").hidden = !!db;
+  }
+
+  function save() {
+    round.updatedAt = new Date().toISOString();
+    round.p1Name = names.p1; round.p2Name = names.p2;
+    store.set("round-" + NEXT, round);
+    renderRound();
+    if (!roundRef) return;
+    const body = JSON.parse(JSON.stringify(round));
+    writing = writing.then(() => roundRef.set(body)).then(() => setSync("ok", "Saved to your world"), e => {
+      setSync("warn", e && e.code === "quota_exceeded" ? "Storage is full" : "Not saved. Try again.");
+    });
+  }
+
+  [1, 2].forEach(n => {
+    $("lock" + n).addEventListener("click", () => {
+      const v = $("text" + n).value.trim();
+      if (!v) { $("text" + n).focus(); $("text" + n).placeholder = "Write something first, even one line."; return; }
+      round["p" + n] = v; round["p" + n + "Locked"] = true;
+      save();
+      if (n === 1) setTimeout(() => $("text2").focus(), 50);
+    });
+    $("edit" + n).addEventListener("click", () => {
+      round["p" + n + "Locked"] = false;
+      save();
+      setTimeout(() => $("text" + n).focus(), 50);
+    });
+    $("text" + n).addEventListener("input", () => store.set("draft-" + NEXT + "-" + n, $("text" + n).value));
+    const d = store.get("draft-" + NEXT + "-" + n, "");
+    if (d && !round["p" + n + "Locked"]) $("text" + n).value = d;
+  });
+  $("sendBtn").addEventListener("click", () => { round.status = "ready"; save(); });
+  $("unsendBtn").addEventListener("click", () => { round.status = "drafting"; save(); });
+  $("copyBtn").addEventListener("click", async () => {
+    const text = `New World, Level ${NEXT}\n${names.p1}: ${round.p1}\n${names.p2}: ${round.p2}`;
+    try { await navigator.clipboard.writeText(text); $("copyBtn").textContent = "Copied"; }
+    catch (e) { $("copyBtn").textContent = "Copy failed"; }
+  });
+
+  let nameTimer = 0;
+  ["1", "2"].forEach(n => $("name" + n).addEventListener("input", () => {
+    names["p" + n] = $("name" + n).value.trim() || ("Player " + n);
+    store.set("names", names);
+    renderNames(); renderRound();
+    clearTimeout(nameTimer);
+    nameTimer = setTimeout(() => { if (namesRef) namesRef.set({ p1: names.p1, p2: names.p2 }).catch(() => {}); }, 700);
+  }));
+
+  async function connect() {
+    names = Object.assign(names, store.get("names", {}));
+    renderNames(); renderRound();
+    const api = window.claude && window.claude.use ? await window.claude.use("db").catch(() => null) : null;
+    if (!api) { setSync("warn", "Offline: turns stay on this device"); renderRound(); return; }
+    db = api;
+    roundRef = db.doc(ROUND_PATH);
+    namesRef = db.doc("meta/players");
+    const timer = setTimeout(() => setSync("warn", "Can't reach your saved world yet"), 10000);
+    roundRef.onSnapshot(snap => {
+      if (!snap.metadata.fromCache) { clearTimeout(timer); setSync("ok", "Saved to your world"); }
+      if (snap.exists) {
+        const d = snap.data();
+        round = Object.assign({ level: NEXT, p1: "", p2: "", p1Locked: false, p2Locked: false, status: "drafting" }, d);
+        store.set("round-" + NEXT, round);
+      }
+      renderRound();
+    }, () => { clearTimeout(timer); setSync("warn", "Lost the connection to your saved world"); });
+    namesRef.onSnapshot(snap => {
+      if (snap.exists) {
+        const d = snap.data();
+        if (document.activeElement !== $("name1") && document.activeElement !== $("name2")) {
+          names = { p1: d.p1 || "Player 1", p2: d.p2 || "Player 2" };
+          store.set("names", names); renderNames(); renderRound(); showStartIfIdle();
+        }
+      }
+    }, () => {});
+  }
+  function showStartIfIdle() { if (mode === "start") showStart(); renderBook(); }
+
+  // test hook (read-only view of the running game, used by tools/playtest.js)
+  window.__nw = { get state() { return S; }, get world() { return W; }, get mode() { return mode; }, begin, loadLevel };
+
+  loadLevel(LEVELS.length - 1);
+  requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
+  connect();
+})();
+</script>
