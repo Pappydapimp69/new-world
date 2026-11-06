@@ -25,44 +25,56 @@ body {
   font-family: var(--body);
   font-size: 16px;
   line-height: 1.5;
+  margin: 0;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 20px 48px;
+  padding-block: 12px;
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
   background-size: 32px 32px;
   background-position: -1px -1px;
 }
-.wrap { max-width: 980px; margin: 0 auto; display: grid; gap: 28px; }
+.wrap { max-width: 1680px; margin: 0 auto; display: grid; gap: 12px; }
+.round, .book { width: 100%; max-width: 980px; margin-inline: auto; box-sizing: border-box; }
 
-/* masthead */
-.mast { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 20px; }
-.mast h1 { font-family: var(--display); font-weight: 400; font-size: clamp(34px, 6vw, 54px); line-height: 1; margin: 0; letter-spacing: -0.01em; }
-.mast h1 .and { color: var(--p1); }
+/* masthead: one row (title, screen tabs, save status) so the level gets the height */
+.mast { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.mast h1 { font-family: var(--display); font-weight: 400; font-size: clamp(26px, 3vw, 34px); line-height: 1; margin: 0; letter-spacing: -0.01em; }
 .mast h1 .w { color: var(--p2); }
-.mast p { margin: 6px 0 0; color: var(--ink-soft); max-width: 46ch; }
+.mast .steps { flex: 1; }
+.lede { margin: 0; color: var(--ink-soft); max-width: 60ch; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--ink-soft); color: var(--ink-soft); background: var(--paper); white-space: nowrap; }
 .chip.ok { border-color: #3a7d55; color: #2e6a47; }
 .chip.warn { border-color: var(--gold); color: #8a5f06; }
 
 /* screens: one at a time, in play order */
 .steps { display: flex; flex-wrap: wrap; gap: 8px; }
-.steps button { background: transparent; color: var(--ink-soft); border: 1.5px solid var(--grid); font-size: 14px; padding: 7px 12px; }
+.steps button { background: transparent; color: var(--ink-soft); border: 1.5px solid var(--grid); font-size: 14px; padding: 5px 11px; }
 .steps button[aria-current="step"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .steps button:disabled { opacity: 0.45; }
 .cleared-note { margin: 0; font-weight: 700; color: #2e6a47; }
 
 /* stage */
-.stage { display: grid; gap: 10px; }
-.hud { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; font-variant-numeric: tabular-nums; }
-.hud .lvl { font-family: var(--display); font-size: 22px; }
+/* the stage's max-width is set by fit() so the whole level fits the window on both axes */
+.stage { display: grid; gap: 8px; width: 100%; margin-inline: auto; }
+.hud { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-variant-numeric: tabular-nums; }
+.hud .lvl { font-family: var(--display); font-size: 20px; }
+.hud button { padding: 4px 10px; font-size: 14px; }
 .hud .stat { color: var(--ink-soft); font-size: 14px; }
 .hud .grow { flex: 1; }
 .screen { position: relative; border: 2px solid var(--ink); border-radius: 4px; background: var(--paper); box-shadow: 4px 4px 0 var(--ink); overflow: hidden; }
 canvas { display: block; width: 100%; height: auto; aspect-ratio: 960 / 544; max-width: 100%; image-rendering: auto; }
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--paper) 86%, transparent); padding: 16px; }
-.card { max-width: 520px; width: 100%; display: grid; gap: 12px; text-align: left; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--paper) 88%, transparent); padding: 16px; overflow: auto; }
+.card { max-width: 540px; width: 100%; display: grid; gap: 10px; text-align: left; }
+.controls { display: grid; gap: 2px; font-size: 14px; color: var(--ink-soft); }
+.controls b { color: var(--ink); }
+.controls button { padding: 2px 8px; font-size: 13px; margin-left: 6px; }
+/* a short level window drops the extra text, so the start button always shows */
+.screen.compact .built, .screen.compact .asked, .screen.compact .card .tip { display: none; }
+.screen.compact .card h2 { font-size: 24px; }
+.screen.tiny .controls, .screen.tiny .card .hint { display: none; }
+.screen.tiny .overlay { padding: 8px; }
 .card h2 { font-family: var(--display); font-weight: 400; font-size: clamp(24px, 4vw, 34px); line-height: 1.1; margin: 0; text-wrap: balance; }
 .eyebrow { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
 .asked { display: grid; gap: 6px; }
@@ -124,18 +136,14 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
 
 <div class="wrap">
   <header class="mast">
-    <div>
-      <h1>New <span class="w">World</span></h1>
-      <p>A game you two write as you play. Clear a level together, each add one change, and Claude builds the next one.</p>
-    </div>
+    <h1>New <span class="w">World</span></h1>
+    <nav class="steps" aria-label="Screens">
+      <button type="button" id="goPlay" data-go="play">1 · Play Level 1</button>
+      <button type="button" id="goWrite" data-go="write" disabled>2 · Write Level 2</button>
+      <button type="button" id="goWorld" data-go="world">3 · The world so far</button>
+    </nav>
     <span class="chip" id="sync">Connecting…</span>
   </header>
-
-  <nav class="steps" aria-label="Screens">
-    <button type="button" id="goPlay" data-go="play">1 · Play Level 1</button>
-    <button type="button" id="goWrite" data-go="write" disabled>2 · Write Level 2</button>
-    <button type="button" id="goWorld" data-go="world">3 · The world so far</button>
-  </nav>
 
   <section class="stage" id="screenPlay" aria-label="Game">
     <div class="hud">
@@ -153,7 +161,14 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
           <h2 id="startTitle">First Draft</h2>
           <div class="asked" id="startAsked"></div>
           <p class="built" id="startBuilt"></p>
-          <div class="row"><button id="startBtn" type="button">Start level</button><span class="hint">or press <kbd>Enter</kbd>, or <kbd>A</kbd> on a controller</span></div>
+          <div class="controls">
+            <span class="p1"><i class="dot" style="background:var(--p1)"></i><b id="keyName1">Player 1</b>: <kbd>A</kbd> <kbd>D</kbd> move, <kbd>W</kbd> jump</span>
+            <span class="p2"><i class="dot" style="background:var(--p2)"></i><b id="keyName2">Player 2</b>: <kbd>←</kbd> <kbd>→</kbd> move, <kbd>↑</kbd> jump</span>
+            <span><b>Controller</b>: stick or d-pad, <kbd>A</kbd> jump, <kbd>Y</kbd> regroup</span>
+            <span><span id="padInfo">Press any button on a controller to connect it.</span><button class="ghost" id="padSwap" type="button" hidden>Swap</button></span>
+            <span class="tip">Stand on each other's heads. Both of you need to reach the gold door.</span>
+          </div>
+          <div class="row"><button id="startBtn" type="button">Start level</button><span class="hint">or <kbd>Enter</kbd>, or <kbd>A</kbd> on a controller</span></div>
         </div>
       </div>
       <div class="overlay" id="ovWin" hidden>
@@ -164,16 +179,6 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
           <div class="row"><button id="toWorldBtn" type="button">Back to the world so far</button><button class="ghost" id="againBtn" type="button">Play it again</button></div>
         </div>
       </div>
-    </div>
-    <div class="keys">
-      <span class="p1"><i class="dot" style="background:var(--p1)"></i><b id="keyName1">Player 1</b>: <kbd>A</kbd> <kbd>D</kbd> move, <kbd>W</kbd> jump</span>
-      <span class="p2"><i class="dot" style="background:var(--p2)"></i><b id="keyName2">Player 2</b>: <kbd>←</kbd> <kbd>→</kbd> move, <kbd>↑</kbd> jump</span>
-      <span>Stand on each other's heads. Both of you need to reach the gold door.</span>
-    </div>
-    <div class="keys">
-      <span><b>Controller</b>: stick or d-pad to move, <kbd>A</kbd> jump, <kbd>Start</kbd> begin, <kbd>Y</kbd> regroup</span>
-      <span id="padInfo">Controllers work too. Press any button on one to connect it.</span>
-      <button class="ghost" id="padSwap" type="button" hidden>Swap controllers</button>
     </div>
   </section>
 
@@ -214,6 +219,7 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
 
   <section class="book" id="screenWorld" aria-labelledby="bookTitle" hidden>
     <h2 id="bookTitle">The world so far</h2>
+    <p class="lede">A game you two write as you play. Clear a level together, each add one change, and Claude builds the next one.</p>
     <div class="waiting" id="worldBanner" hidden>
       <strong id="worldBannerTitle">Level 2 is with Claude.</strong>
       <span id="worldBannerText">In your Claude session, say <code>build the next level</code>. This page updates by itself when the level is ready.</span>
@@ -506,7 +512,7 @@ function stepWorld(W, s, inputs) {
   function renderPadInfo() {
     const el = $("padInfo"), sw = $("padSwap");
     const n = Math.min(pads.count, 2);
-    if (n <= 0) { el.textContent = "Controllers work too. Press any button on one to connect it."; sw.hidden = true; return; }
+    if (n <= 0) { el.textContent = "Press any button on a controller to connect it."; sw.hidden = true; return; }
     const who = k => ((k ^ (pads.swap ? 1 : 0)) ? names.p2 : names.p1);
     el.textContent = n === 1
       ? `Controller connected: it plays ${who(0)}.`
@@ -593,6 +599,7 @@ function stepWorld(W, s, inputs) {
     renderNav();
     if (name === "write") renderRound();
     if (name === "world") renderBook();
+    if (name === "play") fit();
     window.scrollTo({ top: 0 });
     if (name === "write") setTimeout(() => { const t = round.p1Locked ? $("text2") : $("text1"); if (!t.disabled && !t.hidden) t.focus({ preventScroll: true }); }, 50);
   }
@@ -610,6 +617,27 @@ function stepWorld(W, s, inputs) {
     $("worldBannerText").hidden = round.status === "built";
   }
   ["goPlay", "goWrite", "goWorld"].forEach(id => $(id).addEventListener("click", () => show($(id).dataset.go)));
+
+  // ── fit: size the level to the smaller of the window's width and height ──
+  function fit() {
+    const stage = $("screenPlay"), scr = stage.querySelector(".screen");
+    if (stage.hidden) return;
+    const px = v => parseFloat(v) || 0;
+    const root = getComputedStyle(document.documentElement), body = getComputedStyle(document.body);
+    const outer = px(root.paddingTop) + px(root.paddingBottom) + px(body.paddingTop) + px(body.paddingBottom) + px(body.marginTop) + px(body.marginBottom) + 6; // 6: the box shadow and rounding
+    const maxW = stage.parentElement.clientWidth;
+    for (let k = 0; k < 3; k++) { // the HUD can rewrap at a new width, so settle it
+      const chrome = $("screenPlay").parentElement.getBoundingClientRect().height - scr.offsetHeight + outer;
+      const availH = innerHeight - chrome;
+      const w = Math.max(260, Math.min(maxW, Math.floor((availH - 4) * 960 / 544) + 4));
+      stage.style.maxWidth = w + "px";
+    }
+    const h = $("cv").getBoundingClientRect().height;
+    scr.classList.toggle("compact", h < 440);
+    scr.classList.toggle("tiny", h < 300);
+  }
+  addEventListener("resize", fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
 
   // ── drawing ──
   const cv = $("cv"), g = cv.getContext("2d");
@@ -913,6 +941,7 @@ function stepWorld(W, s, inputs) {
   };
 
   loadLevel(LEVELS.length - 1);
+  fit();
   requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
   connect();
 })();

@@ -22,7 +22,7 @@ When the players say "build the next level":
 3. Add level N to `LEVELS` in `game/index.html`, with `asked`, `built` (one plain sentence),
    `map`, `rules`, and a `testPlan` that includes an `expect: "unreachable"` step for every co-op gate.
    Change the engine if a request needs a new mechanic, and add a matching move to the playtest search.
-4. `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png` must PASS. Look at the screenshot.
+4. `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png` and `node tools/fitcheck.js` must both PASS. Look at the screenshots.
 5. Republish `game/index.html` to the same URL, then set the round doc's `status` to `"built"`.
 6. Commit, push, and `brain note` anything you learned.
 
