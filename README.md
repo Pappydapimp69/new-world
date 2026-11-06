@@ -10,6 +10,11 @@ Play: https://claude.ai/artifact/JFfMRHJHi5XYgiL4oi83mw
 - You can stand on each other's heads. Both of you have to reach the gold door.
 
 ## Building the next level (for Claude)
+Standing rule from the players: query Brain, measure in the sim, and iterate until
+each fix holds, then ship. Nothing gets published on a guess. Every change is measured
+with `tools/playtest.js` (and a sim probe for any tuning number), and gets re-measured
+after each fix until it passes.
+
 When the players say "build the next level":
 1. Read `rounds/level-<N>` from the Artifact's database (ArtifactData `get`). It should have `status: "ready"`.
 2. `brain start <1-2 keywords from each request>`, and apply what comes back.
