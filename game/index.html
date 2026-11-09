@@ -58,6 +58,8 @@ body {
 .steps button[aria-current="step"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .steps button:disabled { opacity: 0.45; }
 .cleared-note { margin: 0; font-weight: 700; color: #2e6a47; }
+.struggle { margin: 0; color: var(--ink-soft); font-size: 15px; max-width: 62ch; }
+.playstats { margin: 0; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 
 /* stage */
 /* the stage's max-width is set by fit() so the whole level fits the window on both axes */
@@ -203,6 +205,7 @@ kbd { font-family: var(--body); font-size: 12px; font-weight: 700; border: 1.5px
   <section class="round" id="screenWrite" aria-labelledby="roundTitle" hidden>
     <header>
       <p class="cleared-note" id="clearedNote" hidden></p>
+      <p class="struggle" id="struggle" hidden></p>
       <span class="eyebrow">Your turns</span>
       <h2 id="roundTitle">Write Level 2</h2>
       <p>Take turns. Each of you writes one thing to add or change, like a new move, a hazard, a theme, a rule, or a story beat. When both are locked in, send them to Claude, who builds the next level from them.</p>
@@ -657,6 +660,27 @@ function stepPlayer(W, s, i, inp) {
 // SIM-END
 </script>
 
+<script id="stats">
+// STATS-START: pure summary of logged tries (runs), shown on the world and write screens and read by
+// Claude before building. One run = one try of a level: who fell where and from what, time, stars.
+const FALL_WORDS = { water: "in the water", fire: "in the fire", spikes: "on the spikes" };
+function summarizeRuns(runs, level) {
+  const mine = runs.filter(r => r && r.level === level && (r.won || r.seconds >= 3 || (r.falls && r.falls.length)));
+  const out = { tries: mine.length, clears: 0, best: null, falls: 0, byPlayer: [0, 0], top: null };
+  const spots = {};
+  for (const r of mine) {
+    if (r.won) { out.clears++; if (out.best === null || r.seconds < out.best) out.best = r.seconds; }
+    for (const f of r.falls || []) {
+      out.falls++; out.byPlayer[f.p] = (out.byPlayer[f.p] || 0) + 1;
+      const k = f.p + "|" + f.k; spots[k] = (spots[k] || 0) + 1;
+    }
+  }
+  for (const [k, n] of Object.entries(spots)) if (!out.top || n > out.top.count) { const [p, kind] = k.split("|"); out.top = { p: +p, kind, count: n }; }
+  return out;
+}
+// STATS-END
+</script>
+
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -680,6 +704,7 @@ function stepPlayer(W, s, i, inp) {
   let cleared = store.get("cleared", {});
 
   function loadLevel(idx) {
+    if (typeof runFlush === "function" && S) runFlush(true); // leaving a level ends its try
     levelIdx = idx;
     W = buildWorld(LEVELS[idx]);
     S = newState(W);
@@ -761,7 +786,7 @@ function stepPlayer(W, s, i, inp) {
     return { left: held(KEYMAP[i].left) || !!p.left, right: held(KEYMAP[i].right) || !!p.right, jump: held(KEYMAP[i].jump) || !!p.jump };
   };
 
-  function begin() { mode = "playing"; $("ovStart").hidden = true; $("ovWin").hidden = true; keys.clear(); pads.latch = true; $("cv").focus?.(); musicFor(LEVELS[levelIdx]); }
+  function begin() { if (!runs.cur) runNew(); mode = "playing"; $("ovStart").hidden = true; $("ovWin").hidden = true; keys.clear(); pads.latch = true; $("cv").focus?.(); musicFor(LEVELS[levelIdx]); }
 
   // ── sound: the Sound-engine (vendor/sound-engine, inlined below) ──
   // Audio only reads sim events, never feeds the sim, so playtests stay exact (Brain sound-engine#E7).
@@ -841,6 +866,40 @@ function stepPlayer(W, s, i, inp) {
     if (audio.on && audio.engine && audio.engine.ctx.state !== "running") audio.engine.resume().catch(() => {});
   }));
 
+  // ── play log: one small record per try, saved with your turns so Claude can read where you struggled ──
+  const runs = { cur: null, all: store.get("runs", []), dirty: false, writing: Promise.resolve() };
+  function runNew() {
+    const L = LEVELS[levelIdx];
+    runs.cur = { id: "L" + L.n + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), level: L.n,
+      startedAt: new Date().toISOString(), seconds: 0, won: false, falls: [], regroups: 0, stars: 0, totalStars: W.gems.length,
+      names: [names.p1, names.p2], types: W.types.slice() };
+    runs.dirty = false;
+  }
+  function runRecord(ev) {
+    const r = runs.cur; if (!r) return;
+    if (ev.type === "fall" && r.falls.length < 200) { r.falls.push({ p: ev.i, k: ev.kind, x: Math.floor(ev.x / TILE), y: Math.floor(ev.y / TILE), t: Math.round(S.t / 6) / 10 }); runs.dirty = true; }
+    else if (ev.type === "regroup") { r.regroups++; runs.dirty = true; }
+    else if (ev.type === "star" || ev.type === "checkpoint") runs.dirty = true;
+    else if (ev.type === "win") { r.won = true; runs.dirty = true; }
+  }
+  // end: the try is over (cleared, restarted or left). Writes only when something changed.
+  function runFlush(end) {
+    const r = runs.cur; if (!r) return;
+    r.seconds = Math.round(S.t / 6) / 10; r.stars = S.gems.filter(Boolean).length;
+    const worth = r.won || r.seconds >= 3 || r.falls.length;
+    if ((runs.dirty || end) && worth) {
+      const body = JSON.parse(JSON.stringify(r));
+      runs.all = runs.all.filter(x => x.id !== r.id).concat([body]).slice(-300);
+      store.set("runs", runs.all);
+      if (db) runs.writing = runs.writing.then(() => db.doc("runs/" + r.id).set(body)).catch(() => {});
+      runs.dirty = false;
+      renderBook(); renderStruggle();
+    }
+    if (end) runs.cur = null;
+  }
+  setInterval(() => { if (mode === "playing" && runs.dirty) runFlush(false); }, 15000);
+  addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") runFlush(false); });
+
   // ── loop ──
   const STEP = 1000 / 60;
   let acc = 0, last = performance.now();
@@ -866,7 +925,7 @@ function stepPlayer(W, s, i, inp) {
   function handleEvents() {
     let hudDirty = false;
     for (const ev of S.events) {
-      sfx(ev.type);
+      sfx(ev.type); runRecord(ev);
       const col = ev.i === 1 ? C.p2 : C.p1;
       if (ev.type === "jump") puff(ev.x, ev.y, col, 5, 1.2);
       else if (ev.type === "land") puff(ev.x, ev.y, C["ink-soft"], 6, 1.5);
@@ -890,6 +949,7 @@ function stepPlayer(W, s, i, inp) {
 
   function win() {
     mode = "won";
+    runFlush(true);
     cleared[LEVELS[levelIdx].n] = true; store.set("cleared", cleared);
     const got = S.gems.filter(Boolean).length;
     const stats = `${got} of ${S.gems.length} stars, ${S.falls} ${S.falls === 1 ? "fall" : "falls"}, ${Math.round(S.t / 60)} seconds.`;
@@ -912,7 +972,7 @@ function stepPlayer(W, s, i, inp) {
   const writeOpen = () => !!cleared[LEVELS[LEVELS.length - 1].n] || round.p1Locked || round.p2Locked || round.status !== "drafting";
   function show(name) {
     if (name === "write" && !writeOpen()) name = "play";
-    if (name !== "play" && mode === "playing") { mode = "start"; keys.clear(); showStart(true); }
+    if (name !== "play" && mode === "playing") { mode = "start"; keys.clear(); showStart(true); runFlush(false); }
     if (name !== "play") musicStop();
     screen = name;
     Object.entries(SCREENS).forEach(([k, id]) => { $(id).hidden = k !== name; });
@@ -1209,12 +1269,34 @@ function stepPlayer(W, s, i, inp) {
       if (cleared[L.n]) { const tk = document.createElement("span"); tk.className = "tick"; tk.textContent = "Cleared"; meta.append(tk); }
       meta.append(saidBlock(L.asked));
       const b = document.createElement("p"); b.className = "built"; b.textContent = L.built; meta.append(b);
+      const st = summarizeRuns(runs.all, L.n);
+      if (st.tries) {
+        const ps = document.createElement("p"); ps.className = "playstats";
+        const parts = [`${st.tries} ${st.tries === 1 ? "try" : "tries"}`, `cleared ${st.clears}`];
+        if (st.best !== null) parts.push(`best ${Math.round(st.best)} s`);
+        parts.push(`${st.falls} ${st.falls === 1 ? "fall" : "falls"}`);
+        if (st.top) parts.push(`most often ${whoName(st.top.p, L)} ${FALL_WORDS[st.top.kind] || ""} (${st.top.count})`.replace(/\s+\(/, " ("));
+        ps.textContent = parts.join(" · ");
+        meta.append(ps);
+      }
       const btn = document.createElement("button"); btn.type = "button"; btn.className = "ghost";
       btn.textContent = `Play level ${L.n}`;
       btn.addEventListener("click", () => { loadLevel(idx); show("play"); });
       row.append(num, meta, btn);
       box.append(row);
     });
+  }
+
+  function whoName(p, L) {
+    const t = L && L.rules && L.rules.types && L.rules.types[p];
+    return (p ? names.p2 : names.p1) + (t && TYPES[t] ? " (" + TYPES[t].name.replace(" type", "") + ")" : "");
+  }
+  // on the write screen: where you two struggled on the level you just played, as a nudge for ideas
+  function renderStruggle() {
+    const L = LEVELS[LEVELS.length - 1], st = summarizeRuns(runs.all, L.n), el = $("struggle");
+    if (!st.tries || !st.top) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = `On Level ${L.n}, ${whoName(st.top.p, L)} fell ${FALL_WORDS[st.top.kind] || ""} ${st.top.count} ${st.top.count === 1 ? "time" : "times"}, the most of anything. Make it easier, harder, or a reason to change the plan.`;
   }
 
   $("startBtn").addEventListener("click", begin);
@@ -1331,6 +1413,13 @@ function stepPlayer(W, s, i, inp) {
       }
       renderRound();
     }, () => { clearTimeout(timer); setSync("warn", "Lost the connection to your saved world"); });
+    // tries from every device you play on; the newest copy of each wins
+    db.collection("runs").onSnapshot(qs => {
+      const fromDb = qs.docs.map(d => d.data());
+      const ids = new Set(fromDb.map(r => r.id));
+      runs.all = fromDb.concat(runs.all.filter(r => !ids.has(r.id))).slice(-300);
+      renderBook(); renderStruggle();
+    }, () => {});
     namesRef.onSnapshot(snap => {
       if (snap.exists) {
         const d = snap.data();
@@ -1348,12 +1437,13 @@ function stepPlayer(W, s, i, inp) {
   window.__nw = {
     get state() { return S; }, get world() { return W; }, get mode() { return mode; }, get screen() { return screen; },
     get audio() { return { ready: !!audio.engine, state: audio.engine && audio.engine.ctx.state, song: audio.song, level: audio.level, failed: !!audio.failed, error: audio.error, via: audio.via, on: audio.on }; },
-    begin, loadLevel, show,
+    begin, loadLevel, show, get runs() { return runs.all; }, levels: LEVELS.length,
     feed(frames) { for (const f of frames) if (mode === "playing") tick(f); return { mode, screen, won: S.won }; }
   };
 
   loadLevel(LEVELS.length - 1);
   fit();
+  renderStruggle();
   renderSound();
   requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
   connect();

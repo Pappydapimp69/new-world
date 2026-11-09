@@ -21,14 +21,15 @@ after each fix until it passes.
 
 When the players say "build the next level":
 1. Read `rounds/level-<N>` from the Artifact's database (ArtifactData `get`). It should have `status: "ready"`.
-2. `brain start <1-2 keywords from each request>`, and apply what comes back.
-3. Add level N to `LEVELS` in `game/index.html`, with `asked`, `built` (one plain sentence),
+2. Read how they actually played: the `runs` collection (ArtifactData `list`), one record per try with who fell, where (tile x, y), from what, time, stars and whether they cleared it. Fix or design around the spots they really struggled with; the page shows the same summary on the world and write screens.
+3. `brain start <1-2 keywords from each request>`, and apply what comes back.
+4. Add level N to `LEVELS` in `game/index.html`, with `asked`, `built` (one plain sentence),
    `map`, `rules`, and a `testPlan` that includes an `expect: "unreachable"` step for every co-op gate.
    Change the engine if a request needs a new mechanic, and add a matching move to the playtest search.
-4. Quick suites (seconds): `node tools/mechanics.test.js` (each mechanic against a predicted number), `node tools/golden.js` (seeded trajectories must stay identical after a sim refactor; `--coverage` shows what they hit, `--update` only for an intended change), `node tools/fitcheck.js`, `node tools/musiccheck.mjs`.
-   The level proof: `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png`, `node tools/fitcheck.js` and `node tools/musiccheck.mjs` must all PASS. Look at the screenshots.
+5. Quick suites (seconds): `node tools/mechanics.test.js` (each mechanic against a predicted number), `node tools/golden.js` (seeded trajectories must stay identical after a sim refactor; `--coverage` shows what they hit, `--update` only for an intended change), `node tools/fitcheck.js`, `node tools/musiccheck.mjs`.
+   The level proof: `node tools/playtest.js <N> --browser --shot <scratchpad>/lN.png`, `node tools/fitcheck.js` and `node tools/musiccheck.mjs` must all PASS, and `node tools/playlog.test.js` (the play log, against a stand-in database). Look at the screenshots.
    A new song goes in `SONGS`; a level picks it with `song:`. After updating `vendor/sound-engine`, rerun `node tools/inline-sound.js`.
-5. Republish `game/index.html` to the same URL, then set the round doc's `status` to `"built"`.
-6. Commit, push, and `brain note` anything you learned.
+6. Republish `game/index.html` to the same URL, then set the round doc's `status` to `"built"`.
+7. Commit, push, and `brain note` anything you learned.
 
 See `docs/adr/0001-level-loop.md`.
